@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: agenda-clinica-backend
+    runtime: docker
+    repo: .
+    rootDir: backend
+    plan: starter
+    autoDeploy: false
+    healthCheckPath: /health
+    disk:
+      name: agenda-clinica-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: FLASK_DEBUG
+        value: 0
+      - key: DATABASE_PATH
+        value: /app/data/agenda_clinica.db
+      - key: JWT_EXPIRES_HOURS
+        value: 12
+      - key: APP_ORIGIN
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
