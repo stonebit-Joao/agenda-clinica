@@ -1,6 +1,6 @@
 FROM python:3.13-slim
 WORKDIR /app
-COPY requirements.txt ./
+COPY requisitos.txt ./
 RUN pip install --no-cache-dir -r requisitos.txt
 COPY . .
 ENV PORT=8000
