@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agenda Clínica</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <section id="login-view" class="screen active">
+      <div class="card login-card">
+        <h1>Agenda Clínica</h1>
+        <p class="subtitle">Acesse o painel do sistema</p>
+
+        <form id="login-form">
+          <label for="email">E-mail</label>
+          <input id="email" name="email" type="email" placeholder="admin@agenda-clinica.local" required />
+
+          <label for="password">Senha</label>
+          <input id="password" name="password" type="password" placeholder="Digite sua senha" required />
+
+          <button type="submit">Entrar</button>
+        </form>
+
+        <div id="login-message" class="message"></div>
+      </div>
+    </section>
+
+    <section id="dashboard-view" class="screen">
+      <header class="topbar">
+        <div>
+          <h1>Painel Agenda Clínica</h1>
+          <p id="welcome-text">Bem-vindo</p>
+        </div>
+        <button id="logout-btn" class="secondary-btn">Sair</button>
+      </header>
+
+      <main class="dashboard">
+        <section class="info-grid">
+          <div class="info-card">
+            <span>Clínicas</span>
+            <strong id="card-clinics">0</strong>
+          </div>
+          <div class="info-card">
+            <span>Profissionais</span>
+            <strong id="card-professionals">0</strong>
+          </div>
+          <div class="info-card">
+            <span>Pacientes</span>
+            <strong id="card-patients">0</strong>
+          </div>
+          <div class="info-card">
+            <span>Agendamentos</span>
+            <strong id="card-appointments">0</strong>
+          </div>
+          <div class="info-card">
+            <span>Sessões</span>
+            <strong id="card-sessions">0</strong>
+          </div>
+          <div class="info-card">
+            <span>Auditorias</span>
+            <strong id="card-audits">0</strong>
+          </div>
+          <div class="info-card money">
+            <span>Recebíveis em aberto</span>
+            <strong id="card-receivables-open">R$ 0,00</strong>
+          </div>
+          <div class="info-card money">
+            <span>Pagáveis em aberto</span>
+            <strong id="card-payables-open">R$ 0,00</strong>
+          </div>
+        </section>
+
+        <section class="panel-grid">
+          <div class="card">
+            <h2>Usuário logado</h2>
+            <p><strong>Nome:</strong> <span id="user-name">-</span></p>
+            <p><strong>E-mail:</strong> <span id="user-email">-</span></p>
+            <p><strong>Perfil:</strong> <span id="user-role">-</span></p>
+          </div>
+
+          <div class="card">
+            <h2>Licença</h2>
+            <p><strong>Status:</strong> <span id="license-status">-</span></p>
+            <p><strong>Plano:</strong> <span id="license-plan">-</span></p>
+            <p><strong>Empresa:</strong> <span id="license-company">-</span></p>
+            <p><strong>Expira em:</strong> <span id="license-expires">-</span></p>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Status da API</h2>
+          <p id="api-status">Aguardando carregamento...</p>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
