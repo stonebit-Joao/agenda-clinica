@@ -1,0 +1,18 @@
+{
+  "name": "Agenda Clínica PWA",
+  "short_name": "Agenda Clínica",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0b1220",
+  "theme_color": "#1f6feb",
+  "lang": "pt-BR",
+  "description": "Aplicativo web instalável para gestão clínica com agenda visual, pacientes, recebimentos e dashboard.",
+  "icons": [
+    {
+      "src": "assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

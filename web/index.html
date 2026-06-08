@@ -2,14 +2,20 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agenda Clínica</title>
-  <link rel="stylesheet" href="estilos.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#1f6feb" />
+  <title>Agenda Clínica PWA</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div id="app"></div>
-  <div id="toast-root" class="toast-root"></div>
-  <script src="app.js"></script>
-<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+  <noscript>Ative JavaScript para usar o aplicativo.</noscript>
+  <script src="xlsx.full.min.js?v=20260602"></script>
+  <script src="config.js?v=20260602"></script>
+  <script src="https://unpkg.com/@daily-co/daily-js"></script>
+  <script src="api.js?v=20260602"></script>
+  <script src="app.js?v=20260602"></script>
 </body>
 </html>
