@@ -10,6 +10,15 @@
     patient_id: 'patientId',
     user_id: 'userId',
     appointment_id: 'appointmentId',
+    company_name: 'companyName',
+    plan_name: 'planName',
+    max_users: 'maxUsers',
+    expires_at: 'expiresAt',
+    grace_days: 'graceDays',
+    activation_code: 'activationCode',
+    activation_required: 'activationRequired',
+    activation_completed_at: 'activationCompletedAt',
+    validation_mode: 'validationMode',
     amount_planned: 'amountPlanned',
     amount_paid: 'amountPaid',
     due_date: 'dueDate',
@@ -153,6 +162,30 @@
     const rows = await request(baseUrl, '/api/users', { headers: { Authorization: `Bearer ${token}` } });
     return Array.isArray(rows) ? rows.map(camelize) : [];
   }
+  async function createUser(baseUrl, token, payload) {
+    return camelize(await request(baseUrl, '/api/users', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(decamelize(payload || {})) }) || {});
+  }
+  async function updateUser(baseUrl, token, id, payload) {
+    return camelize(await request(baseUrl, `/api/users/${id}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(decamelize(payload || {})) }) || {});
+  }
+  async function changePassword(baseUrl, token, payload) {
+    return camelize(await request(baseUrl, '/api/auth/change-password', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(decamelize(payload || {})) }) || {});
+  }
+  async function deleteUser(baseUrl, token, id) {
+    return request(baseUrl, `/api/users/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+  }
+  async function getLicense(baseUrl, token) {
+    return camelize(await request(baseUrl, '/api/license', { headers: { Authorization: `Bearer ${token}` } }) || {});
+  }
+  async function getPublicLicenseStatus(baseUrl) {
+    return camelize(await request(baseUrl, '/api/license/public-status') || {});
+  }
+  async function activateFirstAccess(baseUrl, payload) {
+    return camelize(await request(baseUrl, '/api/license/activate', { method: 'POST', body: JSON.stringify(decamelize(payload || {})) }) || {});
+  }
+  async function updateLicense(baseUrl, token, payload) {
+    return camelize(await request(baseUrl, '/api/license', { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(decamelize(payload || {})) }) || {});
+  }
   async function exportFullBackup(baseUrl, token) {
     const data = await request(baseUrl, '/api/export/full-backup', { headers: { Authorization: `Bearer ${token}` } });
     const normalized = {};
@@ -180,7 +213,7 @@
   }
 
   async function loadAll(baseUrl, token, includeAdmin = false) {
-    const [summary, clinics, professionals, patients, appointments, receivables, payables, sessions, audits, users] = await Promise.all([
+    const [summary, clinics, professionals, patients, appointments, receivables, payables, sessions, audits, users, license] = await Promise.all([
       getDashboard(baseUrl, token),
       getResource(baseUrl, token, 'clinics'),
       getResource(baseUrl, token, 'professionals'),
@@ -190,9 +223,10 @@
       getResource(baseUrl, token, 'payables'),
       getResource(baseUrl, token, 'sessions').catch(() => []),
       includeAdmin ? getAudits(baseUrl, token).catch(() => []) : Promise.resolve([]),
-      includeAdmin ? getUsers(baseUrl, token).catch(() => []) : Promise.resolve([])
+      includeAdmin ? getUsers(baseUrl, token).catch(() => []) : Promise.resolve([]),
+      includeAdmin ? getLicense(baseUrl, token).catch(() => null) : Promise.resolve(null)
     ]);
-    return { summary, clinics, professionals, patients, appointments, receivables, payables, sessions, audits, users };
+    return { summary, clinics, professionals, patients, appointments, receivables, payables, sessions, audits, users, license };
   }
 
   const api = {
@@ -215,6 +249,14 @@
     getDashboard,
     getAudits,
     getUsers,
+    createUser,
+    updateUser,
+    changePassword,
+    deleteUser,
+    getLicense,
+    getPublicLicenseStatus,
+    activateFirstAccess,
+    updateLicense,
     exportFullBackup,
     getDailyConfig,
     startClinicalSession,

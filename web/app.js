@@ -3222,7 +3222,7 @@
       ? '<button class="btn ghost" id="open-data-folder">Pasta de dados</button><button class="btn ghost" id="about-btn">Sobre</button>'
       : '<button class="btn ghost" id="about-btn">Sobre</button>';
     const backupBadge = (() => { const bk = listAutoBackups(); return bk.length ? `<span class="last-backup-indicator" id="last-autobackup-badge">💾 Backup: ${safe(bk[0].ts)}</span>` : '<span class="last-backup-indicator" id="last-autobackup-badge">💾 Sem backup</span>'; })();
-    const compactActions = `${installButton}<button class="btn primary agenda-top-cta" data-route="agendamentos">+ Nova sessão</button><button class="btn ghost" id="about-btn">Sobre</button><button class="btn danger" id="logout-btn">Sair</button>`;
+    const compactActions = `${installButton}<button type="button" class="btn primary agenda-top-cta" data-route="agendamentos">+ Nova sessão</button><button class="btn ghost" id="about-btn">Sobre</button><button class="btn danger" id="logout-btn">Sair</button>`;
     const standardActions = `${installButton}${backupBadge}<button class="btn info" id="help-btn">F1 · Ajuda</button><button class="btn ghost" id="help-general-btn">Ajuda geral</button><button class="btn" id="export-json">Exportar backup</button><button class="btn ghost" id="export-audit-csv">Auditoria CSV</button>${importControl}${desktopControls}<button class="btn danger" id="logout-btn">Sair</button>`;
     return `
       <div class="app-shell app-shell-light ${compactDashboard ? 'dashboard-shell' : ''}">
@@ -3230,7 +3230,7 @@
           <div class="shell-header-main">
             <div class="brand brand-large">${renderBrandLogo()}<div><strong>${safe(state.settings.brandName || 'Agenda Clínica')}</strong><br><small>${safe(state.settings.companyName || 'Sua Clínica')} · ${safe(state.settings.commercialPlan || 'Essentials')}</small></div></div>
             <nav class="nav nav-pills">
-              ${Object.entries(NAV_META).map(([route, meta]) => `<button class="${state.meta.route===route?'active':''}" data-route="${route}"><span class="nav-icon">${meta.icon}</span><span>${meta.label}</span></button>`).join('')}
+              ${Object.entries(NAV_META).map(([route, meta]) => `<button type="button" class="${state.meta.route===route?'active':''}" data-route="${route}"><span class="nav-icon">${meta.icon}</span><span>${meta.label}</span></button>`).join('')}
             </nav>
           </div>
           <div class="shell-actions ${compactDashboard ? 'shell-actions-compact' : ''}">
@@ -3339,8 +3339,8 @@
             <p>Fundo claro, tipografia escura, acentos vibrantes e foco nas métricas rápidas, grade semanal e próximas sessões.</p>
           </div>
           <div class="dashboard-intro-actions">
-            <button class="btn primary" data-route="agendamentos">+ Nova sessão</button>
-            <button class="btn ghost" data-route="pacientes">Pacientes</button>
+            <button type="button" class="btn primary" data-route="agendamentos">+ Nova sessão</button>
+            <button type="button" class="btn ghost" data-route="pacientes">Pacientes</button>
           </div>
         </section>
         <section class="dashboard-summary-grid">
@@ -4588,7 +4588,16 @@
   }
 
   function bindCommonEvents() {
-    document.querySelectorAll('[data-route]').forEach(btn => btn.onclick = () => setRoute(btn.dataset.route));
+    document.querySelectorAll('[data-route]').forEach(btn => {
+      if ('type' in btn) btn.type = 'button';
+      btn.onclick = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetRoute = btn.dataset.route;
+        if (!targetRoute) return;
+        setRoute(targetRoute);
+      };
+    });
     document.getElementById('logout-btn')?.addEventListener('click', () => {
       logoutSession('Logout', `Sessão encerrada para ${state.session?.role || 'usuário'}.`);
     });
