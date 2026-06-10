@@ -5844,7 +5844,24 @@ Falhas restantes: ${summary.failed}`);
     ensureAccessSettings();
     if (!state.session && isHostedWebApp()) await refreshPublicLicenseStatus();
     if (!state.session) { clearTimeout(idleTimer); idleTimer = null; stopCommunicationAutomation(); }
-    app.innerHTML = state.session ? currentView() : authScreen();
+    try {
+      app.innerHTML = state.session ? currentView() : authScreen();
+    } catch (error) {
+      console.error('Falha ao renderizar a rota principal', state?.meta?.route, error);
+      if (state.session) {
+        const failedRoute = String(state.meta?.route || 'dashboard');
+        state.meta.route = failedRoute === 'dashboard' ? 'agenda' : 'dashboard';
+        saveState();
+        app.innerHTML = shell(`
+          <section class="card notice danger">
+            <strong>Falha ao abrir o módulo ${safe(failedRoute)}.</strong>
+            <div class="muted">O login foi concluído com sucesso, mas este módulo apresentou erro no navegador. O sistema abriu uma visualização de recuperação para evitar tela travada. Use os botões acima para acessar Agenda, Pacientes ou Configurações enquanto corrigimos o Dashboard.</div>
+          </section>
+        `, 'Acesso concluído', 'Recuperação automática após erro de renderização');
+      } else {
+        app.innerHTML = authScreen();
+      }
+    }
     ensureRequiredGuard(document);
     if (!state.session) {
       document.getElementById('activation-form')?.addEventListener('submit', async event => {
