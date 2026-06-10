@@ -374,6 +374,7 @@ def ensure_schema():
             plan_name TEXT,
             status TEXT NOT NULL DEFAULT 'TRIAL',
             activation_code TEXT,
+            activation_completed_at TEXT,
             max_users INTEGER NOT NULL DEFAULT 5,
             expires_at TEXT,
             grace_days INTEGER NOT NULL DEFAULT 7,
@@ -382,6 +383,7 @@ def ensure_schema():
         );
         '''
     )
+    ensure_column(db, 'license_settings', 'activation_completed_at', 'TEXT')
     ensure_column(db, 'patients', 'consent_recording', 'INTEGER DEFAULT 0')
     ensure_column(db, 'patients', 'consent_signed_at', 'TEXT')
     ensure_column(db, 'patients', 'consent_text', 'TEXT')
@@ -541,11 +543,15 @@ def get_license_settings() -> dict[str, Any]:
     days_left = None
     if expires_dt:
         days_left = (expires_dt.date() - now.date()).days
+    normalized_status = 'EXPIRADA' if expired and status in {'TRIAL', 'ATIVA'} else status
+    activation_completed_at = row.get('activation_completed_at') or ''
     return {
         'company_name': row.get('company_name') or 'Sua Clínica',
         'plan_name': row.get('plan_name') or 'Trial de implantação',
-        'status': 'EXPIRADA' if expired and status in {'TRIAL', 'ATIVA'} else status,
+        'status': normalized_status,
         'activation_code': row.get('activation_code') or '',
+        'activation_completed_at': activation_completed_at,
+        'activation_required': normalized_status == 'PENDENTE_ATIVACAO',
         'max_users': int(row.get('max_users') or 5),
         'expires_at': expires_at or '',
         'grace_days': int(row.get('grace_days') or 7),
@@ -848,6 +854,21 @@ def user_item(user_id: int):
     return jsonify(after)
 
 
+@app.route('/api/license/public-status', methods=['GET'])
+def public_license_status():
+    current = get_license_settings()
+    return jsonify({
+        'company_name': current.get('company_name') or 'Sua Clínica',
+        'plan_name': current.get('plan_name') or 'Plano Comercial',
+        'status': current.get('status') or 'TRIAL',
+        'activation_required': bool(current.get('activation_required')),
+        'expires_at': current.get('expires_at') or '',
+        'days_left': current.get('days_left'),
+        'max_users': int(current.get('max_users') or 1),
+        'validation_mode': current.get('validation_mode') or 'server_signed',
+    })
+
+
 @app.route('/api/license', methods=['GET', 'PUT'])
 @auth_required()
 def license_status():
@@ -861,17 +882,20 @@ def license_status():
     company_name = body.get('company_name') or before.get('company_name') or 'Sua Clínica'
     plan_name = body.get('plan_name') or before.get('plan_name') or 'Plano Comercial'
     status = str(body.get('status') or before.get('status') or 'ATIVA').upper()
+    if status not in {'TRIAL', 'ATIVA', 'SUSPENSA', 'CANCELADA', 'PENDENTE_ATIVACAO'}:
+        status = 'ATIVA'
     max_users = max(1, safe_int(body.get('max_users'), int(before.get('max_users') or 5)))
     expires_at = normalize_license_expiry(body.get('expires_at') if body.get('expires_at') is not None else before.get('expires_at') or '')
     grace_days = max(0, safe_int(body.get('grace_days'), int(before.get('grace_days') or 7)))
     activation_code = build_activation_code(company_name, plan_name, max_users, expires_at)
+    activation_completed_at = '' if status == 'PENDENTE_ATIVACAO' else (before.get('activation_completed_at') or utcnow())
     execute(
         '''
         UPDATE license_settings
-        SET company_name = ?, plan_name = ?, status = ?, activation_code = ?, max_users = ?, expires_at = ?, grace_days = ?, updated_at = ?
+        SET company_name = ?, plan_name = ?, status = ?, activation_code = ?, activation_completed_at = ?, max_users = ?, expires_at = ?, grace_days = ?, updated_at = ?
         WHERE id = 1
         ''',
-        (company_name, plan_name, status, activation_code, max_users, expires_at, grace_days, now),
+        (company_name, plan_name, status, activation_code, activation_completed_at, max_users, expires_at, grace_days, now),
     )
     after = get_license_settings()
     audit(g.current_user['id'], g.current_user['name'], g.current_user['role'], 'Configuração', 'license', 'Licença atualizada', before=before, after=after)
@@ -882,6 +906,9 @@ def license_status():
 def activate_license():
     body = request.get_json(force=True, silent=True) or {}
     activation_code = str(body.get('activation_code') or '').strip().upper()
+    admin_email = str(body.get('admin_email') or ADMIN_EMAIL).strip().lower()
+    admin_password = str(body.get('admin_password') or body.get('password') or '')
+    company_name = str(body.get('company_name') or '').strip()
     current = get_license_settings()
     if not activation_code:
         return jsonify({'error': 'Informe o código de ativação.'}), 400
@@ -889,8 +916,28 @@ def activate_license():
         return jsonify({'error': 'Código de ativação inválido.'}), 400
     if current.get('status') == 'EXPIRADA':
         return jsonify({'error': 'Esta licença já está expirada.', 'license': current}), 403
-    execute('UPDATE license_settings SET status = ?, updated_at = ? WHERE id = 1', ('ATIVA', utcnow()))
-    return jsonify(get_license_settings())
+    error = password_policy_error(admin_password)
+    if error:
+        return jsonify({'error': error}), 400
+    admin_user = query_one('SELECT id, name, email, role, active, created_at FROM users WHERE role = ? ORDER BY id ASC LIMIT 1', ('ADMIN',))
+    if admin_user:
+        execute(
+            'UPDATE users SET email = ?, password_hash = ?, active = 1 WHERE id = ?',
+            (admin_email, generate_password_hash(admin_password), admin_user['id']),
+        )
+    else:
+        execute(
+            'INSERT INTO users (name, email, password_hash, role, active, created_at) VALUES (?, ?, ?, ?, 1, ?)',
+            ('Administrador', admin_email, generate_password_hash(admin_password), 'ADMIN', utcnow()),
+        )
+    final_company_name = company_name or current.get('company_name') or 'Sua Clínica'
+    execute(
+        'UPDATE license_settings SET company_name = ?, status = ?, activation_completed_at = ?, updated_at = ? WHERE id = 1',
+        (final_company_name, 'ATIVA', utcnow(), utcnow()),
+    )
+    refreshed = get_license_settings()
+    audit(None, 'Ativação pública', 'PUBLICO', 'Ativação', 'license', f'Primeiro acesso ativado para {admin_email}', after={'license': refreshed, 'admin_email': admin_email})
+    return jsonify({'ok': True, 'license': refreshed, 'admin_email': admin_email})
 
 
 @app.route('/api/export/full-backup', methods=['GET'])

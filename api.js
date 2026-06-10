@@ -10,6 +10,15 @@
     patient_id: 'patientId',
     user_id: 'userId',
     appointment_id: 'appointmentId',
+    company_name: 'companyName',
+    plan_name: 'planName',
+    max_users: 'maxUsers',
+    expires_at: 'expiresAt',
+    grace_days: 'graceDays',
+    activation_code: 'activationCode',
+    activation_required: 'activationRequired',
+    activation_completed_at: 'activationCompletedAt',
+    validation_mode: 'validationMode',
     amount_planned: 'amountPlanned',
     amount_paid: 'amountPaid',
     due_date: 'dueDate',
@@ -168,6 +177,12 @@
   async function getLicense(baseUrl, token) {
     return camelize(await request(baseUrl, '/api/license', { headers: { Authorization: `Bearer ${token}` } }) || {});
   }
+  async function getPublicLicenseStatus(baseUrl) {
+    return camelize(await request(baseUrl, '/api/license/public-status') || {});
+  }
+  async function activateFirstAccess(baseUrl, payload) {
+    return camelize(await request(baseUrl, '/api/license/activate', { method: 'POST', body: JSON.stringify(decamelize(payload || {})) }) || {});
+  }
   async function updateLicense(baseUrl, token, payload) {
     return camelize(await request(baseUrl, '/api/license', { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(decamelize(payload || {})) }) || {});
   }
@@ -239,6 +254,8 @@
     changePassword,
     deleteUser,
     getLicense,
+    getPublicLicenseStatus,
+    activateFirstAccess,
     updateLicense,
     exportFullBackup,
     getDailyConfig,
