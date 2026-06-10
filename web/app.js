@@ -822,6 +822,7 @@
       return {
         ...defaultState(),
         ...parsed,
+        session: isDesktopApp() ? (parsed.session || null) : null,
         meta: { ...defaultState().meta, ...(parsed.meta || {}) },
         settings: { ...defaultState().settings, ...(parsed.settings || {}) }
       };
