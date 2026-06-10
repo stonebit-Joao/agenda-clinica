@@ -5571,12 +5571,25 @@ Falhas restantes: ${summary.failed}`);
             state.meta.backendLicense = clone(remoteLicense || null);
           }
           if ((submittedAdminPassword || submittedOperatorPassword) && api?.updateUser) {
-            const backendUsers = state.meta.backendUsers || [];
-            const backendAdmin = backendUsers.find(user => user.role === 'ADMIN');
+            let backendUsers = Array.isArray(state.meta.backendUsers) ? [...state.meta.backendUsers] : [];
+            if (!backendUsers.length && api?.getUsers) {
+              backendUsers = await api.getUsers(apiBase(), state.session.token).catch(() => []);
+              state.meta.backendUsers = clone(backendUsers || []);
+            }
+            const adminEmail = String(state.settings.backendEmail || state.session?.email || 'admin@agendaclinica.local').trim().toLowerCase();
+            const backendAdmin = backendUsers.find(user => user.role === 'ADMIN' && String(user.email || '').trim().toLowerCase() === adminEmail)
+              || backendUsers.find(user => user.role === 'ADMIN');
             const backendOperator = backendUsers.find(user => user.role === 'OPERADOR');
-            if (submittedAdminPassword && backendAdmin) await api.updateUser(apiBase(), state.session.token, backendAdmin.id, { password: submittedAdminPassword });
-            if (submittedOperatorPassword && backendOperator) await api.updateUser(apiBase(), state.session.token, backendOperator.id, { password: submittedOperatorPassword });
-            if ((submittedAdminPassword && !backendAdmin) || (submittedOperatorPassword && !backendOperator)) console.warn('Usuário de backend não encontrado para atualização de senha.');
+            if (submittedAdminPassword) {
+              if (!backendAdmin) throw new Error('Usuário ADMIN do backend não encontrado para troca de senha.');
+              await api.updateUser(apiBase(), state.session.token, backendAdmin.id, { password: submittedAdminPassword });
+            }
+            if (submittedOperatorPassword) {
+              if (!backendOperator) throw new Error('Usuário OPERADOR do backend não encontrado para troca de senha.');
+              await api.updateUser(apiBase(), state.session.token, backendOperator.id, { password: submittedOperatorPassword });
+            }
+            state.settings.adminPassword = '';
+            state.settings.operatorPassword = '';
           }
           await syncStateFromBackend();
         } catch (error) {
