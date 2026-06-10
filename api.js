@@ -159,6 +159,9 @@
   async function updateUser(baseUrl, token, id, payload) {
     return camelize(await request(baseUrl, `/api/users/${id}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(decamelize(payload || {})) }) || {});
   }
+  async function changePassword(baseUrl, token, payload) {
+    return camelize(await request(baseUrl, '/api/auth/change-password', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(decamelize(payload || {})) }) || {});
+  }
   async function deleteUser(baseUrl, token, id) {
     return request(baseUrl, `/api/users/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
   }
@@ -233,6 +236,7 @@
     getUsers,
     createUser,
     updateUser,
+    changePassword,
     deleteUser,
     getLicense,
     updateLicense,

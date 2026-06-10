@@ -591,6 +591,20 @@ def bootstrap_admin_info():
     return jsonify({'admin_email': ADMIN_EMAIL, 'jwt_expires_hours': JWT_EXPIRES_HOURS, 'origin': APP_ORIGIN})
 
 
+@app.route('/api/auth/change-password', methods=['POST'])
+@auth_required()
+def change_password():
+    body = request.get_json(force=True, silent=True) or {}
+    new_password = str(body.get('new_password') or body.get('password') or '')
+    error = password_policy_error(new_password)
+    if error:
+        return jsonify({'error': error}), 400
+    execute('UPDATE users SET password_hash = ? WHERE id = ?', (generate_password_hash(new_password), g.current_user['id']))
+    refreshed = query_one('SELECT id, name, email, role, active FROM users WHERE id = ?', (g.current_user['id'],))
+    audit(g.current_user['id'], g.current_user['name'], g.current_user['role'], 'Edição', 'users', 'Senha do usuário autenticado atualizada')
+    return jsonify({'ok': True, 'user': refreshed})
+
+
 @app.route('/api/dashboard/summary', methods=['GET'])
 @auth_required()
 def dashboard_summary():
