@@ -240,6 +240,26 @@
   function preferredSaasEmail() {
     return String(state?.settings?.backendEmail || 'admin@agendaclinica.local').trim().toLowerCase() || 'admin@agendaclinica.local';
   }
+  function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+  async function confirmRemoteLicenseState(expectedStatus = '', attempts = 6, delayMs = 350) {
+    const normalizedExpected = String(expectedStatus || '').toUpperCase();
+    let lastLicense = null;
+    let lastPublicLicense = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (api?.getLicense && state.session?.token) lastLicense = await api.getLicense(apiBase(), state.session.token).catch(() => lastLicense);
+      if (api?.getPublicLicenseStatus) lastPublicLicense = await api.getPublicLicenseStatus(apiBase()).catch(() => lastPublicLicense);
+      const observedStatus = String(lastLicense?.status || lastPublicLicense?.status || '').toUpperCase();
+      if (!normalizedExpected || observedStatus === normalizedExpected) {
+        return { license: lastLicense, publicLicense: lastPublicLicense, observedStatus };
+      }
+      if (attempt < attempts - 1) await wait(delayMs);
+    }
+    return {
+      license: lastLicense,
+      publicLicense: lastPublicLicense,
+      observedStatus: String(lastLicense?.status || lastPublicLicense?.status || '').toUpperCase()
+    };
+  }
   async function refreshPublicLicenseStatus(force = false) {
     if (isDesktopApp() || state.session) return state.meta?.publicLicense || null;
     state.meta ||= {};
@@ -461,6 +481,9 @@
     const license = licenseStatus();
     const backendManaged = !isDesktopApp() && useBackend() && Array.isArray(state.meta?.backendUsers);
     const managedUsers = backendManaged ? (state.meta.backendUsers || []) : (state.settings.localUsers || []);
+    const backendStatus = String(state.meta?.backendLicense?.status || '').toUpperCase();
+    const effectiveDeliveryMode = backendStatus ? (backendStatus === 'PENDENTE_ATIVACAO' ? 'pendente' : 'ativa') : String(state.settings.licenseDeliveryMode || 'ativa');
+    const effectiveStatus = state.meta?.backendLicense?.status || (effectiveDeliveryMode === 'pendente' ? 'PENDENTE_ATIVACAO' : (license.valid ? 'ATIVA' : (license.reason || 'INVÁLIDA')));
     const operatorRows = managedUsers.map(user => `
       <tr>
         <td>${safe(user.name)}</td>
@@ -477,8 +500,8 @@
       <div class="field"><label>Nome da licença</label><input name="licenseClinicName" type="text" value="${safe(state.settings.licenseClinicName || '')}" required /></div>
       <div class="field"><label>Limite de operadores</label><input name="licenseOperatorLimit" type="number" min="1" max="99" value="${Number(state.settings.licenseOperatorLimit || 3)}" required /></div>
       <div class="field"><label>Licença válida até</label><input name="licenseExpiresAt" type="date" value="${safe(state.settings.licenseExpiresAt || '')}" /></div>
-      <div class="field"><label>Entrega ao cliente</label><select name="licenseDeliveryMode"><option value="ativa" ${String(state.settings.licenseDeliveryMode || 'ativa') !== 'pendente' ? 'selected' : ''}>Acesso imediato</option><option value="pendente" ${String(state.settings.licenseDeliveryMode || '') === 'pendente' ? 'selected' : ''}>Exigir ativação no primeiro acesso</option></select></div>
-      <div class="field"><label>Status atual</label><input type="text" value="${safe(state.meta?.backendLicense?.status || (String(state.settings.licenseDeliveryMode || '') === 'pendente' ? 'PENDENTE_ATIVACAO' : (license.valid ? 'ATIVA' : (license.reason || 'INVÁLIDA'))))}" readonly /></div>
+      <div class="field"><label>Entrega ao cliente</label><select name="licenseDeliveryMode"><option value="ativa" ${effectiveDeliveryMode !== 'pendente' ? 'selected' : ''}>Acesso imediato</option><option value="pendente" ${effectiveDeliveryMode === 'pendente' ? 'selected' : ''}>Exigir ativação no primeiro acesso</option></select></div>
+      <div class="field"><label>Status atual</label><input type="text" value="${safe(effectiveStatus)}" readonly /></div>
       ${licenseKeyInput}
       <div class="field"><label>Alerta de sessão próxima</label><select name="enableUpcomingSessionAlert"><option value="1" ${state.settings.enableUpcomingSessionAlert ? 'selected' : ''}>Ligado</option><option value="0" ${!state.settings.enableUpcomingSessionAlert ? 'selected' : ''}>Desligado</option></select></div>
       <div class="field"><label>Antecedência do alerta</label><input name="sessionAlertLeadMinutes" type="number" min="1" max="180" value="${Number(state.settings.sessionAlertLeadMinutes || 10)}" required /></div>
@@ -3190,6 +3213,7 @@
 
   function shell(content, title, subtitle = '') {
     const role = currentRole();
+    const compactDashboard = title === 'Agenda';
     const installButton = !isDesktopApp() && deferredPrompt ? '<button class="btn success" id="install-app">Instalar app</button>' : '';
     const importControl = isDesktopApp()
       ? '<button class="btn ghost" id="import-backup-native">Restaurar backup</button>'
@@ -3197,121 +3221,161 @@
     const desktopControls = isDesktopApp()
       ? '<button class="btn ghost" id="open-data-folder">Pasta de dados</button><button class="btn ghost" id="about-btn">Sobre</button>'
       : '<button class="btn ghost" id="about-btn">Sobre</button>';
+    const backupBadge = (() => { const bk = listAutoBackups(); return bk.length ? `<span class="last-backup-indicator" id="last-autobackup-badge">💾 Backup: ${safe(bk[0].ts)}</span>` : '<span class="last-backup-indicator" id="last-autobackup-badge">💾 Sem backup</span>'; })();
+    const compactActions = `${installButton}<button class="btn primary agenda-top-cta" data-route="agendamentos">+ Nova sessão</button><button class="btn ghost" id="about-btn">Sobre</button><button class="btn danger" id="logout-btn">Sair</button>`;
+    const standardActions = `${installButton}${backupBadge}<button class="btn info" id="help-btn">F1 · Ajuda</button><button class="btn ghost" id="help-general-btn">Ajuda geral</button><button class="btn" id="export-json">Exportar backup</button><button class="btn ghost" id="export-audit-csv">Auditoria CSV</button>${importControl}${desktopControls}<button class="btn danger" id="logout-btn">Sair</button>`;
     return `
-      <div class="app-shell">
-        <aside class="sidebar">
-          <div class="brand">${renderBrandLogo()}<div><strong>${safe(state.settings.brandName || 'Agenda Clínica')}</strong><br><small>${safe(role)} conectado · ${safe(state.settings.commercialPlan || 'Essentials')}</small></div></div>
-          <div class="chip">Empresa: ${safe(state.settings.companyName || 'Sua Clínica')}</div>
-          <div class="chip">Plano: ${safe(state.settings.commercialPlan || 'Essentials')}</div>
-          <div class="chip">Versão: ${safe(desktopInfo.version || '1.0.0')}</div>
-          <nav class="nav">
-            ${Object.entries(NAV_META).map(([route, meta]) => `<button class="${state.meta.route===route?'active':''}" data-route="${route}"><span class="nav-icon">${meta.icon}</span><span>${meta.label}</span></button>`).join('')}
-          </nav>
-        </aside>
-        <main class="main">
-          <div class="topbar">
-            <div><h1 style="margin:0">${title}</h1><div class="muted">${subtitle}</div></div>
+      <div class="app-shell app-shell-light ${compactDashboard ? 'dashboard-shell' : ''}">
+        <header class="shell-header ${compactDashboard ? 'shell-header-compact' : ''}">
+          <div class="shell-header-main">
+            <div class="brand brand-large">${renderBrandLogo()}<div><strong>${safe(state.settings.brandName || 'Agenda Clínica')}</strong><br><small>${safe(state.settings.companyName || 'Sua Clínica')} · ${safe(state.settings.commercialPlan || 'Essentials')}</small></div></div>
+            <nav class="nav nav-pills">
+              ${Object.entries(NAV_META).map(([route, meta]) => `<button class="${state.meta.route===route?'active':''}" data-route="${route}"><span class="nav-icon">${meta.icon}</span><span>${meta.label}</span></button>`).join('')}
+            </nav>
+          </div>
+          <div class="shell-actions ${compactDashboard ? 'shell-actions-compact' : ''}">
+            <div class="shell-title-block">${compactDashboard ? `<div class="dashboard-compact-note muted">Painel SaaS claro com foco em agenda semanal, próximas sessões e indicadores rápidos.</div>` : `<h1>${title}</h1><div class="muted">${subtitle}</div>`}</div>
+            ${compactDashboard ? `<div class="shell-utility-row">${backupBadge}</div>` : ''}
             <div class="actions">
-              ${installButton}
-              ${(() => { const bk = listAutoBackups(); return bk.length ? `<span class="last-backup-indicator" id="last-autobackup-badge">💾 Backup: ${safe(bk[0].ts)}</span>` : '<span class="last-backup-indicator" id="last-autobackup-badge">💾 Sem backup</span>'; })()}
-              <button class="btn info" id="help-btn">F1 · Ajuda do módulo</button>
-              <button class="btn ghost" id="help-general-btn">Ajuda geral</button>
-              <button class="btn" id="export-json">Exportar backup</button>
-              <button class="btn ghost" id="export-audit-csv">Exportar auditoria CSV</button>
-              ${importControl}
-              ${desktopControls}
-              <button class="btn danger" id="logout-btn">Sair</button>
+              ${compactDashboard ? compactActions : standardActions}
             </div>
           </div>
+        </header>
+        <main class="main main-light">
           ${content}
           ${renderGlobalOverlays()}
         </main>
       </div>`;
   }
 
+  function dashboardStatusTone(status = '') {
+    const normalized = String(status || '').toUpperCase();
+    if (normalized === 'REALIZADO') return 'success';
+    if (normalized === 'AGENDADO') return 'scheduled';
+    if (normalized === 'CANCELADO') return 'danger';
+    if (normalized === 'FALTOU') return 'warn';
+    return 'neutral';
+  }
+
+  function dashboardWeekPreview() {
+    const base = new Date();
+    const monday = new Date(base);
+    const weekday = (base.getDay() + 6) % 7;
+    monday.setDate(base.getDate() - weekday);
+    monday.setHours(0, 0, 0, 0);
+    const dayLabels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+    const appointments = scopedAppointments(false)
+      .filter(item => item.date)
+      .slice()
+      .sort((a, b) => `${a.date} ${a.time || ''}`.localeCompare(`${b.date} ${b.time || ''}`));
+    const days = Array.from({ length: 7 }, (_, index) => {
+      const day = new Date(monday);
+      day.setDate(monday.getDate() + index);
+      const iso = day.toISOString().slice(0, 10);
+      const items = appointments.filter(item => item.date === iso).slice(0, 3);
+      const todayFlag = iso === todayIso();
+      return `
+        <div class="week-day-card ${todayFlag ? 'today' : ''}">
+          <div class="week-day-head"><span>${dayLabels[index]}</span><strong>${String(day.getDate()).padStart(2, '0')}</strong></div>
+          <div class="week-day-body">
+            ${items.length ? items.map(item => `<div class="week-pill ${dashboardStatusTone(item.status)}"><span class="week-pill-name">${safe((item.patientName || item.professionalName || 'Sessão').slice(0, 18))}</span><small>${safe(item.time || '')}</small></div>`).join('') : '<div class="week-empty">Sem sessões</div>'}
+          </div>
+        </div>`;
+    });
+    return `
+      <article class="card dashboard-clean-card dashboard-week-card">
+        <div class="spread chart-head"><div><h3>Semana atual</h3><div class="muted">Grade semanal enxuta, com os blocos principais da agenda.</div></div><span class="chip">Visão semanal</span></div>
+        <div class="week-grid-clean">${days.join('')}</div>
+      </article>`;
+  }
+
+  function dashboardUpcomingSessions(limit = 4) {
+    const items = scopedAppointments(false)
+      .filter(item => item.date && (item.date > todayIso() || (item.date === todayIso() && String(item.time || '23:59') >= new Date().toTimeString().slice(0,5))))
+      .slice()
+      .sort((a, b) => `${a.date} ${a.time || ''}`.localeCompare(`${b.date} ${b.time || ''}`))
+      .slice(0, limit);
+    return `
+      <article class="card dashboard-clean-card dashboard-upcoming-card">
+        <div class="spread chart-head"><div><h3>Próximas sessões</h3><div class="muted">Lista curta no estilo da tela de referência, pronta para acompanhamento.</div></div><span class="chip">Fila do dia</span></div>
+        <div class="upcoming-list">
+          ${items.length ? items.map(item => `
+            <div class="upcoming-item ${dashboardStatusTone(item.status)}">
+              <div>
+                <strong>${safe(item.patientName || item.professionalName || 'Sessão')}</strong>
+                <div class="muted">${safe(weekdayLabel(item.date))} ${safe(item.time || '00:00')} · ${safe(item.code || 'Sessão')}</div>
+              </div>
+              <span class="badge ${dashboardStatusTone(item.status) === 'success' ? 'ok' : dashboardStatusTone(item.status) === 'scheduled' ? 'info' : dashboardStatusTone(item.status)}">${safe(statusLabel(item.status || 'AGENDADO'))}</span>
+            </div>`).join('') : '<div class="empty">Nenhuma próxima sessão encontrada.</div>'}
+        </div>
+      </article>`;
+  }
+
   function dashboardView() {
     const m = dashboardMetrics();
     const analytics = dashboardAnalytics();
     const cash = cashMetrics();
-    const recent = state.audits.slice(0, 8);
-    const collectionBadge = `${m.collectionRate.toFixed(1).replace('.', ',')}% da meta`;
-    const expenseBadge = `${m.expenseRate.toFixed(1).replace('.', ',')}% pago`;
-    const rankingRows = analytics.patientRanking.map((item, index) => `
-      <tr>
-        <td>#${index + 1}</td>
-        <td><strong>${safe(item.name)}</strong><br><small class="muted">${safe(item.clinicName)} · ${safe(item.professionalName)}</small></td>
-        <td>${money(item.planned)}</td>
-        <td>${money(item.paid)}</td>
-        <td>${money(item.pending)}</td>
-        <td>${money(item.ticket)}</td>
-        <td><span class="badge ${item.pending > 0 ? 'warn' : 'ok'}">${safe(item.status)}</span></td>
-      </tr>`).join('');
+    const today = todayIso();
+    const todayAppointments = scopedAppointments(false).filter(item => item.date === today);
+    const sessionsToday = todayAppointments.length;
+    const doneToday = todayAppointments.filter(item => String(item.status || '').toUpperCase() === 'REALIZADO').length;
+    const pendingToday = todayAppointments.filter(item => ['AGENDADO', 'EM_ABERTO'].includes(String(item.status || '').toUpperCase())).length;
+    const financeSnapshot = [
+      { label: 'Recebimentos previstos', value: money(m.planned), note: `${m.receivableCount} títulos no período` },
+      { label: 'Recebido', value: money(m.paid), note: `${m.collectionRate.toFixed(1).replace('.', ',')}% de conversão` },
+      { label: 'Saldo líquido', value: money(m.balance), note: `Caixa atual ${money(cash.balance)}` }
+    ];
+    const opsSnapshot = [
+      { label: 'Profissionais', value: String(m.pros), note: `${m.clinics} clínicas ativas` },
+      { label: 'Receber', value: money(m.toReceive), note: `${m.overdue} atrasados` },
+      { label: 'Pagar', value: money(m.toPay), note: `${m.payableOverdue} vencidos` }
+    ];
     return shell(`
-      <section class="card-grid dashboard-kpis">
-        <article class="card"><div class="muted">Recebimentos previstos</div><div class="kpi">${money(m.planned)}</div><div class="kpi-sub">No filtro atual</div><span class="badge info">${m.receivableCount} títulos</span></article>
-        <article class="card"><div class="muted">Recebido</div><div class="kpi">${money(m.paid)}</div><div class="kpi-sub">Conversão financeira</div><span class="badge ok">${collectionBadge}</span></article>
-        <article class="card"><div class="muted">A receber</div><div class="kpi">${money(m.toReceive)}</div><div class="kpi-sub">Em aberto + atrasado</div><span class="badge ${m.overdue ? 'warn' : 'info'}">${m.overdue} atrasados</span></article>
-        <article class="card"><div class="muted">Despesas previstas</div><div class="kpi">${money(m.payablePlanned)}</div><div class="kpi-sub">Contas a pagar</div><span class="badge warn">${m.payableCount} títulos</span></article>
-        <article class="card"><div class="muted">Pago</div><div class="kpi">${money(m.payablePaid)}</div><div class="kpi-sub">Saída realizada</div><span class="badge info">${expenseBadge}</span></article>
-        <article class="card"><div class="muted">Saldo líquido</div><div class="kpi">${money(m.balance)}</div><div class="kpi-sub">Recebido - pago</div><span class="badge ${m.balance >= 0 ? 'ok' : 'danger'}">Caixa ${money(cash.balance)}</span></article>
-      </section>
+      <section class="dashboard-surface">
+        <section class="dashboard-intro card dashboard-clean-card">
+          <div>
+            <div class="muted dashboard-eyebrow">C — Moderno claro (anti-dark)</div>
+            <h2>Agenda em visual SaaS claro</h2>
+            <p>Fundo claro, tipografia escura, acentos vibrantes e foco nas métricas rápidas, grade semanal e próximas sessões.</p>
+          </div>
+          <div class="dashboard-intro-actions">
+            <button class="btn primary" data-route="agendamentos">+ Nova sessão</button>
+            <button class="btn ghost" data-route="pacientes">Pacientes</button>
+          </div>
+        </section>
+        <section class="dashboard-summary-grid">
+          <article class="card metric-card neutral"><div class="metric-label">Sessões hoje</div><div class="metric-value">${sessionsToday}</div><div class="metric-note">Compromissos do dia atual</div></article>
+          <article class="card metric-card success"><div class="metric-label">Realizadas</div><div class="metric-value">${doneToday}</div><div class="metric-note">Sessões concluídas hoje</div></article>
+          <article class="card metric-card warn"><div class="metric-label">Pendentes</div><div class="metric-value">${pendingToday}</div><div class="metric-note">Atendimentos aguardando execução</div></article>
+          <article class="card metric-card purple"><div class="metric-label">Pacientes</div><div class="metric-value">${m.patients}</div><div class="metric-note">Base cadastrada da clínica</div></article>
+        </section>
 
-      <section class="layout-2 section dashboard-layout-main">
-        ${renderTrendCard(analytics.trend)}
-        <div class="stack">
-          <article class="card chart-card">
-            <div class="spread chart-head"><div><h3>Resumo operacional</h3><div class="muted">Indicadores rápidos do período filtrado.</div></div><div class="flex"><span class="chip">Pacientes ${m.patients}</span><span class="chip">Profissionais ${m.pros}</span><span class="chip">Clínicas ${m.clinics}</span></div></div>
-            <div class="stats-mini-grid">
-              <div class="card inset"><div class="muted">Sessões realizadas</div><div class="kpi">${m.done}</div></div>
-              <div class="card inset"><div class="muted">Agendamentos futuros</div><div class="kpi">${m.upcoming}</div></div>
-              <div class="card inset"><div class="muted">Entradas de caixa</div><div class="kpi">${money(cash.inflow)}</div></div>
-              <div class="card inset"><div class="muted">Saídas de caixa</div><div class="kpi">${money(cash.outflow)}</div></div>
+        <section class="dashboard-primary-grid section">
+          ${dashboardWeekPreview()}
+          ${dashboardUpcomingSessions(4)}
+        </section>
+
+        <section class="layout-2 section dashboard-secondary-grid">
+          <article class="card dashboard-clean-card">
+            <div class="spread chart-head"><div><h3>Resumo financeiro</h3><div class="muted">Indicadores centrais em leitura rápida.</div></div><span class="chip">${safe(state.settings.commercialPlan || 'Essentials')}</span></div>
+            <div class="snapshot-grid">
+              ${financeSnapshot.map(item => `<div class="snapshot-item"><div class="muted">${safe(item.label)}</div><strong>${safe(item.value)}</strong><small>${safe(item.note)}</small></div>`).join('')}
             </div>
           </article>
-          <article class="card chart-card dashboard-filter-card">
-            <div class="spread"><h3>Filtros rápidos</h3>${clinicScopeBadge('Escopo global')}</div>
-            <div class="form-grid">
-              <div class="field"><label>Clínica</label><select id="clinic-filter"><option>Todas as clínicas</option>${state.clinics.map(c => `<option ${state.meta.clinicFilter===c.name?'selected':''}>${safe(c.name)}</option>`).join('')}</select></div>
-              <div class="field"><label>Mês</label><select id="month-filter"><option ${state.meta.monthFilter==='Todos'?'selected':''}>Todos</option>${['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map(mes => `<option ${state.meta.monthFilter===mes?'selected':''}>${mes}</option>`).join('')}</select></div>
+          <article class="card dashboard-clean-card">
+            <div class="spread chart-head"><div><h3>Operação clínica</h3><div class="muted">Volume operacional e saúde da agenda.</div></div><span class="chip">${m.upcoming} futuras</span></div>
+            <div class="snapshot-grid">
+              ${opsSnapshot.map(item => `<div class="snapshot-item"><div class="muted">${safe(item.label)}</div><strong>${safe(item.value)}</strong><small>${safe(item.note)}</small></div>`).join('')}
             </div>
-            <div class="notice section">A clínica escolhida aqui passa a valer como escopo padrão para filtros e novos lançamentos em todos os módulos: profissionais, pacientes, atendimento clínico, contas a pagar e caixa.</div>
-            <p class="footer-note">Os filtros atualizam indicadores, gráficos por clínica, profissional, agenda, caixa e ranking por paciente.</p>
           </article>
-        </div>
-      </section>
+        </section>
 
-      <section class="layout-3 section">
-        ${renderDonutCard('Carteira de recebimentos', 'Previstos x recebidos x atrasados', analytics.receivableMix, money(m.paid), 'Recebido', collectionBadge)}
-        ${renderDonutCard('Contas a pagar', 'Despesa paga, aberta e atrasada', analytics.payableMix, money(m.payablePaid), 'Pago', `${m.payableOverdue} vencidos`) }
-        ${renderDonutCard('Status da agenda', 'Distribuição dos atendimentos', analytics.appointmentMix, String(m.done), 'realizados', `${m.upcoming} futuros`) }
+        <section class="layout-2 section">
+          ${renderPerformanceCard('Indicadores por clínica', 'Comparativo financeiro resumido por clínica.', analytics.clinicStats, `${analytics.clinicStats.length} clínicas`, item => `Recebido ${money(item.paid)} · Pendente ${money(item.pending)} · ${item.done} sessões · ${item.patients} pacientes`)}
+          ${renderPerformanceCard('Indicadores por profissional', 'Comparativo produtivo por profissional.', analytics.professionalStats, `${analytics.professionalStats.length} profissionais`, item => `Recebido ${money(item.paid)} · Pendente ${money(item.pending)} · ${item.done} realizadas · ${item.upcoming} futuras`)}
+        </section>
       </section>
-
-      <section class="layout-2 section">
-        ${renderPerformanceCard('Indicadores por clínica', 'Recebido com base no filtro aplicado.', analytics.clinicStats, `${analytics.clinicStats.length} clínicas`, item => `Previsto ${money(item.planned)} · Pendente ${money(item.pending)} · ${item.done} sessões realizadas · ${item.patients} pacientes`)}
-        ${renderPerformanceCard('Indicadores por profissional', 'Comparativo financeiro e produtivo.', analytics.professionalStats, `${analytics.professionalStats.length} profissionais`, item => `Previsto ${money(item.planned)} · Pendente ${money(item.pending)} · ${item.done} sessões realizadas · ${item.upcoming} agendadas · ${safe(item.clinicName)}`)}
-      </section>
-
-      <section class="layout-2 section">
-        ${renderDonutCard('Despesas por categoria', 'Distribuição das despesas previstas no filtro atual.', analytics.expenseCategoryMix, money(m.payablePlanned), 'Previsto', `${analytics.expenseCategoryStats.length} categorias`)}
-        ${renderPerformanceCard('Categorias de despesa', 'Comparativo entre valor previsto, pago e pendente por categoria.', analytics.expenseCategoryStats, `${analytics.expenseCategoryStats.length} categorias`, item => `Previsto ${money(item.planned)} · Pago ${money(item.paid)} · Pendente ${money(item.pending)} · ${item.count} lançamento(s)`)}
-      </section>
-
-      <section class="section">
-        ${renderExpenseCategoryTrendCard(analytics.expenseCategoryTrend, analytics.topExpenseCategories)}
-      </section>
-
-      <section class="section card chart-card">
-        <div class="spread chart-head"><div><h3>Ranking por paciente</h3><div class="muted">Ordenado por valor recebido, com ticket médio por título.</div></div>${analytics.patientRanking.length ? `<span class="badge info">Top ${analytics.patientRanking.length}</span>` : ''}</div>
-        ${analytics.patientRanking.length ? `<div class="table-wrap"><table><thead><tr><th>Posição</th><th>Paciente</th><th>Previsto</th><th>Recebido</th><th>Pendente</th><th>Ticket médio</th><th>Status</th></tr></thead><tbody>${rankingRows}</tbody></table></div>` : `<div class="empty">Cadastre pacientes e recebimentos para gerar o ranking automaticamente.</div>`}
-      </section>
-
-      <section class="section card chart-card">
-        <h3>Auditoria recente</h3>
-        <div class="table-wrap"><table><thead><tr><th>Data/hora</th><th>Usuário</th><th>Ação</th><th>Detalhe</th></tr></thead><tbody>
-          ${recent.map(item => `<tr><td>${new Date(item.at).toLocaleString('pt-BR')}</td><td>${safe(item.actor)}</td><td>${safe(item.action)}</td><td>${safe(item.detail)}</td></tr>`).join('')}
-        </tbody></table></div>
-      </section>
-    `, 'Dashboard', 'Visão executiva com evolução financeira, gráficos circulares, cortes por clínica e profissional, e ranking por paciente.');
+    `, 'Agenda', 'Layout moderno claro alinhado ao formato da tela 1, priorizando agenda, KPIs curtos e leitura SaaS limpa.');
   }
 
   function simpleTableSection(title, columns, rows, emptyText = 'Nenhum registro encontrado.') {
@@ -5636,21 +5700,53 @@ Falhas restantes: ${summary.failed}`);
       if (!isDesktopApp() && useBackend()) {
         try {
           if (api?.updateLicense) {
+            const requestedLicenseStatus = state.settings.licenseDeliveryMode === 'pendente' ? 'PENDENTE_ATIVACAO' : 'ATIVA';
+            state.meta.publicLicenseFetchedAt = 0;
             const remoteLicense = await api.updateLicense(apiBase(), state.session.token, {
               companyName: state.settings.licenseClinicName || state.settings.companyName || 'Sua Clínica',
               planName: state.settings.commercialPlan || 'Essentials',
-              status: state.settings.licenseDeliveryMode === 'pendente' ? 'PENDENTE_ATIVACAO' : 'ATIVA',
+              status: requestedLicenseStatus,
               maxUsers: state.settings.licenseOperatorLimit || 3,
               expiresAt: state.settings.licenseExpiresAt || '',
               graceDays: 7
             });
-            if (remoteLicense?.companyName) state.settings.licenseClinicName = remoteLicense.companyName;
-            if (remoteLicense?.planName) state.settings.commercialPlan = remoteLicense.planName;
-            if (remoteLicense?.maxUsers != null) state.settings.licenseOperatorLimit = Math.max(1, Number(remoteLicense.maxUsers || 1));
-            if (remoteLicense?.expiresAt != null) state.settings.licenseExpiresAt = String(remoteLicense.expiresAt || '').slice(0, 10);
-            if (remoteLicense?.activationCode != null) state.settings.licenseKey = String(remoteLicense.activationCode || '');
-            if (remoteLicense?.status != null) state.settings.licenseDeliveryMode = String(remoteLicense.status || '').toUpperCase() === 'PENDENTE_ATIVACAO' ? 'pendente' : 'ativa';
-            state.meta.backendLicense = clone(remoteLicense || null);
+            const confirmation = await confirmRemoteLicenseState(requestedLicenseStatus, requestedLicenseStatus === 'PENDENTE_ATIVACAO' ? 8 : 5, 400);
+            const confirmedLicense = confirmation.license || remoteLicense || null;
+            const publicLicense = confirmation.publicLicense || null;
+            const effectiveLicense = confirmedLicense || remoteLicense || null;
+            if (effectiveLicense?.companyName) state.settings.licenseClinicName = effectiveLicense.companyName;
+            if (effectiveLicense?.companyName) state.settings.companyName = effectiveLicense.companyName;
+            if (effectiveLicense?.planName) state.settings.commercialPlan = effectiveLicense.planName;
+            if (effectiveLicense?.maxUsers != null) state.settings.licenseOperatorLimit = Math.max(1, Number(effectiveLicense.maxUsers || 1));
+            if (effectiveLicense?.expiresAt != null) state.settings.licenseExpiresAt = String(effectiveLicense.expiresAt || '').slice(0, 10);
+            if (effectiveLicense?.activationCode != null) state.settings.licenseKey = String(effectiveLicense.activationCode || '');
+            if (effectiveLicense?.status != null) state.settings.licenseDeliveryMode = String(effectiveLicense.status || '').toUpperCase() === 'PENDENTE_ATIVACAO' ? 'pendente' : 'ativa';
+            state.meta.backendLicense = clone(effectiveLicense || null);
+            if (publicLicense) {
+              state.meta.publicLicense = clone(publicLicense || null);
+              state.meta.publicLicenseFetchedAt = Date.now();
+              state.meta.publicLicenseError = '';
+            } else if (effectiveLicense) {
+              state.meta.publicLicense = {
+                companyName: effectiveLicense.companyName || state.settings.licenseClinicName || state.settings.companyName || 'Sua Clínica',
+                planName: effectiveLicense.planName || state.settings.commercialPlan || 'Essentials',
+                status: effectiveLicense.status || requestedLicenseStatus,
+                activationRequired: String(effectiveLicense.status || requestedLicenseStatus).toUpperCase() === 'PENDENTE_ATIVACAO',
+                expiresAt: effectiveLicense.expiresAt || '',
+                daysLeft: effectiveLicense.daysLeft ?? null,
+                maxUsers: effectiveLicense.maxUsers || state.settings.licenseOperatorLimit || 3,
+                validationMode: effectiveLicense.validationMode || 'server_signed'
+              };
+              state.meta.publicLicenseFetchedAt = Date.now();
+              state.meta.publicLicenseError = '';
+            }
+            const observedStatus = String(confirmation.observedStatus || effectiveLicense?.status || '').toUpperCase();
+            if (requestedLicenseStatus === 'PENDENTE_ATIVACAO' && observedStatus !== 'PENDENTE_ATIVACAO') {
+              throw new Error('O backend não confirmou a licença como pendente de ativação.');
+            }
+            if (requestedLicenseStatus === 'ATIVA' && observedStatus && observedStatus !== 'ATIVA') {
+              throw new Error('O backend não confirmou o retorno da licença para ATIVA.');
+            }
           }
           if (submittedAdminPassword || submittedOperatorPassword) {
             let backendUsers = Array.isArray(state.meta.backendUsers) ? [...state.meta.backendUsers] : [];
