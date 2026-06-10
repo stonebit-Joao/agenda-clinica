@@ -757,6 +757,35 @@ def users_collection():
     return jsonify(created), 201
 
 
+@app.route('/api/users/<int:user_id>', methods=['PUT', 'DELETE'])
+@auth_required(admin_only=True)
+def user_item(user_id: int):
+    before = query_one('SELECT id, name, email, role, clinic_id, active, created_at FROM users WHERE id = ?', (user_id,))
+    if not before:
+        return jsonify({'error': 'Usuário não encontrado'}), 404
+    if request.method == 'DELETE':
+        execute('DELETE FROM users WHERE id = ?', (user_id,))
+        audit(g.current_user['id'], g.current_user['name'], g.current_user['role'], 'Exclusão', 'users', f'Usuário {user_id} removido', before=before)
+        return jsonify({'ok': True})
+    body = request.get_json(force=True, silent=True) or {}
+    execute(
+        'UPDATE users SET name = ?, email = ?, role = ?, clinic_id = ?, active = ? WHERE id = ?',
+        (
+            body.get('name') or before.get('name'),
+            str(body.get('email') or before.get('email') or '').strip().lower(),
+            body.get('role') or before.get('role') or 'OPERADOR',
+            body.get('clinic_id') if body.get('clinic_id') is not None else before.get('clinic_id'),
+            1 if body.get('active', before.get('active', True)) else 0,
+            user_id,
+        ),
+    )
+    if body.get('password'):
+        execute('UPDATE users SET password_hash = ? WHERE id = ?', (generate_password_hash(str(body.get('password'))), user_id))
+    after = query_one('SELECT id, name, email, role, clinic_id, active, created_at FROM users WHERE id = ?', (user_id,))
+    audit(g.current_user['id'], g.current_user['name'], g.current_user['role'], 'Edição', 'users', f'Usuário {user_id} atualizado', before=before, after=after)
+    return jsonify(after)
+
+
 @app.route('/api/license', methods=['GET', 'PUT'])
 @auth_required()
 def license_status():
