@@ -881,7 +881,17 @@ def license_status():
     now = utcnow()
     company_name = body.get('company_name') or before.get('company_name') or 'Sua Clínica'
     plan_name = body.get('plan_name') or before.get('plan_name') or 'Plano Comercial'
+    requested_delivery_mode = str(body.get('license_delivery_mode') or body.get('delivery_mode') or '').strip().lower()
+    activation_required = body.get('activation_required')
     status = str(body.get('status') or before.get('status') or 'ATIVA').upper()
+    if requested_delivery_mode in {'pendente', 'pending'}:
+        status = 'PENDENTE_ATIVACAO'
+    elif requested_delivery_mode in {'ativa', 'ativo', 'active'}:
+        status = 'ATIVA'
+    elif activation_required is True:
+        status = 'PENDENTE_ATIVACAO'
+    elif activation_required is False and status == 'PENDENTE_ATIVACAO':
+        status = 'ATIVA'
     if status not in {'TRIAL', 'ATIVA', 'SUSPENSA', 'CANCELADA', 'PENDENTE_ATIVACAO'}:
         status = 'ATIVA'
     max_users = max(1, safe_int(body.get('max_users'), int(before.get('max_users') or 5)))
