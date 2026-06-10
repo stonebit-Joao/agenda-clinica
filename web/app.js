@@ -240,6 +240,30 @@
   function preferredSaasEmail() {
     return String(state?.settings?.backendEmail || 'admin@agendaclinica.local').trim().toLowerCase() || 'admin@agendaclinica.local';
   }
+  async function refreshPublicLicenseStatus(force = false) {
+    if (isDesktopApp() || state.session) return state.meta?.publicLicense || null;
+    state.meta ||= {};
+    const now = Date.now();
+    if (!force && state.meta.publicLicense && (now - Number(state.meta.publicLicenseFetchedAt || 0) < 15000)) return state.meta.publicLicense;
+    try {
+      const data = api?.getPublicLicenseStatus ? await api.getPublicLicenseStatus(preferredBackendUrl()) : null;
+      state.meta.publicLicense = data || null;
+      state.meta.publicLicenseFetchedAt = now;
+      state.meta.publicLicenseError = '';
+      if (data?.companyName) {
+        state.settings.companyName = state.settings.companyName || String(data.companyName || '');
+        state.settings.licenseClinicName = String(data.companyName || state.settings.licenseClinicName || '');
+      }
+      if (data?.planName) state.settings.commercialPlan = String(data.planName || state.settings.commercialPlan || 'Essentials');
+      if (data?.expiresAt) state.settings.licenseExpiresAt = String(data.expiresAt || '').slice(0, 10);
+      if (data?.status) state.settings.licenseDeliveryMode = String(data.status).toUpperCase() === 'PENDENTE_ATIVACAO' ? 'pendente' : 'ativa';
+      return state.meta.publicLicense;
+    } catch (error) {
+      state.meta.publicLicenseError = error.message || 'Falha ao consultar a licença pública.';
+      state.meta.publicLicenseFetchedAt = now;
+      return state.meta.publicLicense || null;
+    }
+  }
 
   function normalizePhoneDigits(phone) {
     const digits = String(phone || '').replace(/\D/g, '');
@@ -453,6 +477,8 @@
       <div class="field"><label>Nome da licença</label><input name="licenseClinicName" type="text" value="${safe(state.settings.licenseClinicName || '')}" required /></div>
       <div class="field"><label>Limite de operadores</label><input name="licenseOperatorLimit" type="number" min="1" max="99" value="${Number(state.settings.licenseOperatorLimit || 3)}" required /></div>
       <div class="field"><label>Licença válida até</label><input name="licenseExpiresAt" type="date" value="${safe(state.settings.licenseExpiresAt || '')}" /></div>
+      <div class="field"><label>Entrega ao cliente</label><select name="licenseDeliveryMode"><option value="ativa" ${String(state.settings.licenseDeliveryMode || 'ativa') !== 'pendente' ? 'selected' : ''}>Acesso imediato</option><option value="pendente" ${String(state.settings.licenseDeliveryMode || '') === 'pendente' ? 'selected' : ''}>Exigir ativação no primeiro acesso</option></select></div>
+      <div class="field"><label>Status atual</label><input type="text" value="${safe(state.meta?.backendLicense?.status || (String(state.settings.licenseDeliveryMode || '') === 'pendente' ? 'PENDENTE_ATIVACAO' : (license.valid ? 'ATIVA' : (license.reason || 'INVÁLIDA'))))}" readonly /></div>
       ${licenseKeyInput}
       <div class="field"><label>Alerta de sessão próxima</label><select name="enableUpcomingSessionAlert"><option value="1" ${state.settings.enableUpcomingSessionAlert ? 'selected' : ''}>Ligado</option><option value="0" ${!state.settings.enableUpcomingSessionAlert ? 'selected' : ''}>Desligado</option></select></div>
       <div class="field"><label>Antecedência do alerta</label><input name="sessionAlertLeadMinutes" type="number" min="1" max="180" value="${Number(state.settings.sessionAlertLeadMinutes || 10)}" required /></div>
@@ -757,6 +783,7 @@
         authMode: 'local',
         backendUrl: 'http://127.0.0.1:8000',
         backendEmail: 'admin@agendaclinica.local',
+        licenseDeliveryMode: 'ativa',
         dailyDomain: '',
         dailyApiKey: '',
         consentTemplate: 'Autorizo o registro da sessão por gravação e transcrição exclusivamente para fins clínicos, prontuário, auditoria e continuidade terapêutica, conforme as políticas da clínica.',
@@ -1433,10 +1460,12 @@
     state.meta.backendLicense = dataset.license ? clone(dataset.license) : null;
     if (dataset.license) {
       state.settings.licenseClinicName = String(dataset.license.companyName || state.settings.licenseClinicName || state.settings.companyName || 'Sua Clínica');
+      state.settings.companyName = String(dataset.license.companyName || state.settings.companyName || '');
       state.settings.commercialPlan = String(dataset.license.planName || state.settings.commercialPlan || 'Essentials');
       state.settings.licenseOperatorLimit = Math.max(1, Number(dataset.license.maxUsers || state.settings.licenseOperatorLimit || 3));
       state.settings.licenseExpiresAt = String(dataset.license.expiresAt || state.settings.licenseExpiresAt || '').slice(0, 10);
       state.settings.licenseKey = String(dataset.license.activationCode || state.settings.licenseKey || '');
+      state.settings.licenseDeliveryMode = String(dataset.license.status || '').toUpperCase() === 'PENDENTE_ATIVACAO' ? 'pendente' : 'ativa';
     }
     state.clinics = clone(dataset.clinics || []);
     state.professionals = clone(dataset.professionals || []);
@@ -3094,6 +3123,39 @@
     const hostedWeb = isHostedWebApp();
     const backendUrl = preferredBackendUrl();
     const backendEmail = preferredSaasEmail();
+    const publicLicense = state.meta?.publicLicense || null;
+    const activationRequired = hostedWeb && !!publicLicense?.activationRequired;
+    if (activationRequired) {
+      return `
+        <section class="auth">
+          <div class="auth-card">
+            <div class="hero">
+              <div class="brand">${renderBrandLogo()}<div><strong>${safe(state.settings.brandName || 'Agenda Clínica')}</strong><br><small>${safe(publicLicense?.companyName || state.settings.companyName || 'Sua Clínica')}</small></div></div>
+              <p>Primeiro acesso do cliente final. Informe o código de ativação recebido, defina o e-mail do administrador e crie a senha inicial do sistema.</p>
+              <ul>
+                <li>Ativação única no primeiro acesso</li>
+                <li>Criação da senha inicial do ADMIN</li>
+                <li>Vinculação da licença ao ambiente publicado</li>
+                <li>Entrada automática após ativar</li>
+              </ul>
+              <div class="notice">Licença em preparação para ativação. Plano: ${safe(publicLicense?.planName || state.settings.commercialPlan || 'Comercial')} · Limite de operadores: ${safe(publicLicense?.maxUsers || state.settings.licenseOperatorLimit || 1)}</div>
+            </div>
+            <div class="card">
+              <h2>Ativar primeiro acesso</h2>
+              <form id="activation-form" class="toolbar">
+                <div class="field"><label>Nome da clínica</label><input name="companyName" type="text" value="${safe(publicLicense?.companyName || state.settings.companyName || '')}" required /></div>
+                <div class="field"><label>Email do administrador</label><input name="email" type="email" value="${safe(backendEmail)}" placeholder="admin@clinica.com" autocapitalize="off" autocomplete="username" spellcheck="false" required /></div>
+                <div class="field" style="grid-column:1/-1"><label>Código de ativação</label><input name="activationCode" type="text" placeholder="LIC-XXXX-XXXX" autocomplete="off" required /></div>
+                <div class="field"><label>Criar senha</label><input name="adminPassword" type="password" placeholder="Defina a senha inicial" autocomplete="new-password" required /></div>
+                <div class="field"><label>Confirmar senha</label><input name="adminPasswordConfirm" type="password" placeholder="Repita a senha" autocomplete="new-password" required /></div>
+                <div class="field" style="grid-column:1/-1"><label>Backend oficial</label><input type="text" value="${safe(backendUrl)}" readonly /></div>
+                <button class="btn primary" type="submit">Ativar e entrar</button>
+              </form>
+              <p class="footer-note">Depois da ativação, você entra automaticamente com o e-mail e a senha definidos agora.</p>
+            </div>
+          </div>
+        </section>`;
+    }
     return `
       <section class="auth">
         <div class="auth-card">
@@ -5541,6 +5603,7 @@ Falhas restantes: ${summary.failed}`);
       state.settings.licenseClinicName = String(fd.get('licenseClinicName') || '').trim() || state.settings.companyName || 'Sua Clínica';
       state.settings.licenseOperatorLimit = Math.max(1, Number(fd.get('licenseOperatorLimit') || 3));
       state.settings.licenseExpiresAt = String(fd.get('licenseExpiresAt') || '').trim();
+      state.settings.licenseDeliveryMode = String(fd.get('licenseDeliveryMode') || state.settings.licenseDeliveryMode || 'ativa').trim() || 'ativa';
       state.settings.licenseKey = String(fd.get('licenseKey') || state.settings.licenseKey || '').trim();
       state.settings.enableUpcomingSessionAlert = String(fd.get('enableUpcomingSessionAlert') || '1') === '1';
       state.settings.enableProfessionalReminder = String(fd.get('enableProfessionalReminder') || '1') === '1';
@@ -5576,7 +5639,7 @@ Falhas restantes: ${summary.failed}`);
             const remoteLicense = await api.updateLicense(apiBase(), state.session.token, {
               companyName: state.settings.licenseClinicName || state.settings.companyName || 'Sua Clínica',
               planName: state.settings.commercialPlan || 'Essentials',
-              status: 'ATIVA',
+              status: state.settings.licenseDeliveryMode === 'pendente' ? 'PENDENTE_ATIVACAO' : 'ATIVA',
               maxUsers: state.settings.licenseOperatorLimit || 3,
               expiresAt: state.settings.licenseExpiresAt || '',
               graceDays: 7
@@ -5586,6 +5649,7 @@ Falhas restantes: ${summary.failed}`);
             if (remoteLicense?.maxUsers != null) state.settings.licenseOperatorLimit = Math.max(1, Number(remoteLicense.maxUsers || 1));
             if (remoteLicense?.expiresAt != null) state.settings.licenseExpiresAt = String(remoteLicense.expiresAt || '').slice(0, 10);
             if (remoteLicense?.activationCode != null) state.settings.licenseKey = String(remoteLicense.activationCode || '');
+            if (remoteLicense?.status != null) state.settings.licenseDeliveryMode = String(remoteLicense.status || '').toUpperCase() === 'PENDENTE_ATIVACAO' ? 'pendente' : 'ativa';
             state.meta.backendLicense = clone(remoteLicense || null);
           }
           if (submittedAdminPassword || submittedOperatorPassword) {
@@ -5673,10 +5737,49 @@ Falhas restantes: ${summary.failed}`);
       stopClinicalTimer();
     }
     ensureAccessSettings();
+    if (!state.session && isHostedWebApp()) await refreshPublicLicenseStatus();
     if (!state.session) { clearTimeout(idleTimer); idleTimer = null; stopCommunicationAutomation(); }
     app.innerHTML = state.session ? currentView() : authScreen();
     ensureRequiredGuard(document);
     if (!state.session) {
+      document.getElementById('activation-form')?.addEventListener('submit', async event => {
+        event.preventDefault();
+        const fd = new FormData(event.target);
+        const companyName = String(fd.get('companyName') || '').trim();
+        const email = String(fd.get('email') || '').trim().toLowerCase();
+        const activationCode = String(fd.get('activationCode') || '').trim().toUpperCase();
+        const adminPassword = String(fd.get('adminPassword') || '');
+        const adminPasswordConfirm = String(fd.get('adminPasswordConfirm') || '');
+        if (!companyName) return alert('Informe o nome da clínica para ativação.');
+        if (!email) return alert('Informe o e-mail do administrador.');
+        if (!activationCode) return alert('Informe o código de ativação.');
+        if (!adminPassword) return alert('Informe a senha inicial do administrador.');
+        if (adminPassword !== adminPasswordConfirm) return alert('As senhas informadas não coincidem.');
+        try {
+          if (!api?.activateFirstAccess || !api?.login) throw new Error('Camada de ativação não carregada.');
+          state.settings.backendUrl = preferredBackendUrl();
+          state.settings.backendEmail = email;
+          state.settings.authMode = 'saas';
+          const activation = await api.activateFirstAccess(preferredBackendUrl(), { activation_code: activationCode, admin_email: email, admin_password: adminPassword, company_name: companyName });
+          state.settings.companyName = companyName;
+          state.settings.licenseClinicName = companyName;
+          state.settings.firstRunCompleted = true;
+          state.meta.onboardingOpen = false;
+          await refreshPublicLicenseStatus(true);
+          const result = await api.login(preferredBackendUrl(), state.settings.backendEmail, adminPassword);
+          state.session = { role: result.user.role, name: result.user.name, email: result.user.email, at: new Date().toISOString(), token: result.token, authMode: 'saas' };
+          if (api) {
+            api.apiBase = preferredBackendUrl();
+            api.token = result.token;
+          }
+          saveState();
+          await syncStateFromBackend();
+          alert('Licença ativada com sucesso.');
+          render();
+        } catch (error) {
+          alert(error.message || 'Falha ao ativar a licença no primeiro acesso.');
+        }
+      });
       document.getElementById('login-form')?.addEventListener('submit', async event => {
         event.preventDefault();
         const fd = new FormData(event.target);
