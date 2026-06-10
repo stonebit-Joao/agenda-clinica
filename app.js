@@ -308,14 +308,19 @@
   }
   function licenseStatus() {
     ensureAccessSettings();
+    const backendLicense = state.meta?.backendLicense || null;
+    if (!isDesktopApp() && (useBackend() || state.session?.authMode === 'saas') && backendLicense) {
+      if (backendLicense.active) return { valid: true, expected: backendLicense.activationCode || '', source: 'backend', status: backendLicense.status || 'ATIVA', daysLeft: backendLicense.daysLeft };
+      return { valid: false, reason: backendLicense.status === 'EXPIRADA' ? 'A licença do backend está expirada.' : 'A licença do backend está suspensa ou inativa.', expected: backendLicense.activationCode || '', source: 'backend', status: backendLicense.status || '', daysLeft: backendLicense.daysLeft };
+    }
     const expected = buildLicenseKey(state.settings);
     const configured = String(state.settings.licenseKey || '').trim();
-    if (configured && configured !== expected) return { valid: false, reason: 'A chave da licença não confere com os dados configurados.' };
+    if (configured && configured !== expected) return { valid: false, reason: 'A chave da licença não confere com os dados configurados.', expected, source: 'local' };
     if (state.settings.licenseExpiresAt) {
       const end = new Date(`${state.settings.licenseExpiresAt}T23:59:59`);
-      if (!Number.isNaN(end.getTime()) && end.getTime() < Date.now()) return { valid: false, reason: 'A licença local está expirada.' };
+      if (!Number.isNaN(end.getTime()) && end.getTime() < Date.now()) return { valid: false, reason: 'A licença local está expirada.', expected, source: 'local' };
     }
-    return { valid: true, expected };
+    return { valid: true, expected, source: 'local' };
   }
   async function sendWhatsAppMessage(phone, text, options = {}) {
     const digits = normalizePhoneDigits(phone);
@@ -418,20 +423,25 @@
   function renderAccessAutomationFields() {
     ensureAccessSettings();
     const license = licenseStatus();
-    const operatorRows = (state.settings.localUsers || []).map(user => `
+    const backendManaged = !isDesktopApp() && useBackend() && Array.isArray(state.meta?.backendUsers);
+    const managedUsers = backendManaged ? (state.meta.backendUsers || []) : (state.settings.localUsers || []);
+    const operatorRows = managedUsers.map(user => `
       <tr>
         <td>${safe(user.name)}</td>
+        <td>${safe(user.email || '—')}</td>
         <td>${safe(user.role)}</td>
-        <td>${safe(user.status || 'Ativo')}</td>
-        <td>${user.role === 'ADMIN' ? '<span class="badge info">Fixo</span>' : `<button class="btn ghost js-remove-local-user" type="button" data-user-id="${safe(user.id)}">Remover</button>`}</td>
+        <td>${safe(user.status || (user.active === false ? 'Inativo' : 'Ativo'))}</td>
+        <td>${(user.role === 'ADMIN') ? '<span class="badge info">Fixo</span>' : `<button class="btn ghost js-remove-local-user" type="button" data-user-id="${safe(user.id)}">Remover</button>`}</td>
       </tr>
     `).join('');
+    const licenseKeyInput = backendManaged
+      ? `<div class="field"><label>Chave da licença</label><input name="licenseKey" type="text" value="${safe(state.settings.licenseKey || license.expected || '')}" readonly /></div><div class="field" style="grid-column:1/-1"><label>Validação</label><input type="text" value="Gerada e validada pelo backend" readonly /></div>`
+      : `<div class="field"><label>Chave da licença</label><input name="licenseKey" type="text" value="${safe(state.settings.licenseKey || state.settings.licensePreviewKey || '')}" /></div><div class="field" style="grid-column:1/-1"><label>Prévia da chave</label><input type="text" value="${safe(state.settings.licensePreviewKey || '')}" readonly /></div>`;
     return `
       <div class="field"><label>Nome da licença</label><input name="licenseClinicName" type="text" value="${safe(state.settings.licenseClinicName || '')}" required /></div>
       <div class="field"><label>Limite de operadores</label><input name="licenseOperatorLimit" type="number" min="1" max="99" value="${Number(state.settings.licenseOperatorLimit || 3)}" required /></div>
       <div class="field"><label>Licença válida até</label><input name="licenseExpiresAt" type="date" value="${safe(state.settings.licenseExpiresAt || '')}" /></div>
-      <div class="field"><label>Chave da licença</label><input name="licenseKey" type="text" value="${safe(state.settings.licenseKey || state.settings.licensePreviewKey || '')}" /></div>
-      <div class="field" style="grid-column:1/-1"><label>Prévia da chave</label><input type="text" value="${safe(state.settings.licensePreviewKey || '')}" readonly /></div>
+      ${licenseKeyInput}
       <div class="field"><label>Alerta de sessão próxima</label><select name="enableUpcomingSessionAlert"><option value="1" ${state.settings.enableUpcomingSessionAlert ? 'selected' : ''}>Ligado</option><option value="0" ${!state.settings.enableUpcomingSessionAlert ? 'selected' : ''}>Desligado</option></select></div>
       <div class="field"><label>Antecedência do alerta</label><input name="sessionAlertLeadMinutes" type="number" min="1" max="180" value="${Number(state.settings.sessionAlertLeadMinutes || 10)}" required /></div>
       <div class="field"><label>Lembrete para paciente</label><select name="enablePatientReminder"><option value="1" ${state.settings.enablePatientReminder ? 'selected' : ''}>Ligado</option><option value="0" ${!state.settings.enablePatientReminder ? 'selected' : ''}>Desligado</option></select></div>
@@ -443,17 +453,18 @@
       <div class="field"><label>Token do WhatsApp</label><input name="whatsappAccessToken" type="password" value="${safe(state.settings.whatsappAccessToken || '')}" /></div>
       <div class="field"><label>Número comercial</label><input name="whatsappBusinessNumber" type="text" value="${safe(state.settings.whatsappBusinessNumber || '')}" placeholder="5511999999999" /></div>
       <div class="field" style="grid-column:1/-1">
-        <label>Usuários locais</label>
-        <div class="table-wrap"><table><thead><tr><th>Nome</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${operatorRows}</tbody></table></div>
-        <div class="footer-note">Status da licença: <strong>${license.valid ? 'Válida' : safe(license.reason || 'Inválida')}</strong>. Links locais pendentes: ${(state.meta.communication.pendingLinks || []).length}.</div>
+        <label>${backendManaged ? 'Usuários do backend' : 'Usuários locais'}</label>
+        <div class="table-wrap"><table><thead><tr><th>Nome</th><th>Email</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${operatorRows}</tbody></table></div>
+        <div class="footer-note">Status da licença: <strong>${license.valid ? 'Válida' : safe(license.reason || 'Inválida')}</strong>. ${backendManaged ? 'As senhas são gerenciadas no backend e não são exibidas no painel.' : `Links locais pendentes: ${(state.meta.communication.pendingLinks || []).length}.`}</div>
       </div>
       <div class="field" style="grid-column:1/-1">
-        <label>Novo operador local</label>
+        <label>${backendManaged ? 'Novo operador do backend' : 'Novo operador local'}</label>
         <div id="local-user-form" class="form-grid four operator-inline-grid">
           <div class="field"><label>Nome</label><input id="new-local-user-name" type="text" placeholder="Operador" /></div>
-          <div class="field"><label>Senha</label><input id="new-local-user-password" type="text" placeholder="Senha do operador" /></div>
+          <div class="field"><label>Email</label><input id="new-local-user-email" type="email" placeholder="operador@clinica.com" /></div>
+          <div class="field"><label>Senha</label><input id="new-local-user-password" type="password" placeholder="Senha do operador" /></div>
           <div class="field"><label>Status</label><select id="new-local-user-status"><option>Ativo</option><option>Inativo</option></select></div>
-          <div class="field"><label>&nbsp;</label><button class="btn ghost" id="js-add-operator" type="button">Adicionar operador</button></div>
+          <div class="field" style="grid-column:1/-1"><button class="btn ghost" id="js-add-operator" type="button">Adicionar operador</button></div>
         </div>
       </div>
       <div class="field" style="grid-column:1/-1">
@@ -1406,6 +1417,7 @@
   function applyBackendDataset(dataset = {}) {
     state.meta.dashboardSummary = dataset.summary || null;
     state.meta.backendUsers = clone(dataset.users || []);
+    state.meta.backendLicense = dataset.license ? clone(dataset.license) : null;
     if (dataset.license) {
       state.settings.licenseClinicName = String(dataset.license.companyName || state.settings.licenseClinicName || state.settings.companyName || 'Sua Clínica');
       state.settings.commercialPlan = String(dataset.license.planName || state.settings.commercialPlan || 'Essentials');
@@ -4115,8 +4127,8 @@
           <article class="card">
             <h3>Painel Admin · Segurança e marca</h3>
             <form id="password-form" class="toolbar">
-              <div class="field"><label>Senha ADMIN</label><input name="adminPassword" type="text" value="${safe(state.settings.adminPassword)}" /></div>
-              <div class="field"><label>Senha OPERADOR</label><input name="operatorPassword" type="text" value="${safe(state.settings.operatorPassword)}" /></div>
+              <div class="field"><label>Nova senha ADMIN</label><input name="adminPassword" type="password" value="" placeholder="Deixe em branco para manter a atual" /></div>
+              <div class="field"><label>Nova senha OPERADOR principal</label><input name="operatorPassword" type="password" value="" placeholder="Deixe em branco para manter a atual" /></div>
               <div class="field"><label>Nome comercial</label><input name="brandName" type="text" value="${safe(state.settings.brandName || 'Agenda Clínica')}" /></div>
               <div class="field"><label>Empresa</label><input name="companyName" type="text" value="${safe(state.settings.companyName || '')}" /></div>
               <div class="field"><label>Logomarca da clínica</label><input name="logoFile" type="file" accept="image/*" /></div>
@@ -4171,8 +4183,8 @@
         <article class="card">
           <h3>Painel Admin · Segurança, marca e SaaS</h3>
           <form id="password-form" class="toolbar">
-            <div class="field"><label>Senha ADMIN</label><input name="adminPassword" type="text" value="${safe(state.settings.adminPassword)}" /></div>
-            <div class="field"><label>Senha OPERADOR</label><input name="operatorPassword" type="text" value="${safe(state.settings.operatorPassword)}" /></div>
+            <div class="field"><label>Nova senha ADMIN</label><input name="adminPassword" type="password" value="" placeholder="Deixe em branco para manter a atual" /></div>
+            <div class="field"><label>Nova senha OPERADOR principal</label><input name="operatorPassword" type="password" value="" placeholder="Deixe em branco para manter a atual" /></div>
             <div class="field"><label>Nome comercial</label><input name="brandName" type="text" value="${safe(state.settings.brandName || 'Agenda Clínica')}" /></div>
             <div class="field"><label>Empresa</label><input name="companyName" type="text" value="${safe(state.settings.companyName || '')}" /></div>
             <div class="field"><label>Logomarca da clínica</label><input name="logoFile" type="file" accept="image/*" /></div>
@@ -4836,29 +4848,49 @@ Falhas restantes: ${summary.failed}`);
       render();
     });
 
-    document.getElementById('js-add-operator')?.addEventListener('click', () => {
+    document.getElementById('js-add-operator')?.addEventListener('click', async () => {
       try { requireAdmin(); } catch (error) { alert(error.message); return; }
       ensureAccessSettings();
-      const activeOperators = (state.settings.localUsers || []).filter(user => user.role === 'OPERADOR' && user.status !== 'Inativo').length;
+      const activeOperators = (useBackend() ? (state.meta.backendUsers || []) : (state.settings.localUsers || [])).filter(user => user.role === 'OPERADOR' && user.status !== 'Inativo' && user.active !== false).length;
       if (activeOperators >= Number(state.settings.licenseOperatorLimit || 3)) return alert('O limite de operadores da licença foi atingido.');
       const name = String(document.getElementById('new-local-user-name')?.value || '').trim();
+      const email = String(document.getElementById('new-local-user-email')?.value || '').trim().toLowerCase();
       const password = String(document.getElementById('new-local-user-password')?.value || '').trim();
       const status = String(document.getElementById('new-local-user-status')?.value || 'Ativo');
       if (!name || !password) return alert('Informe nome e senha do operador.');
-      state.settings.localUsers.push({ id: uid('USR'), name, role: 'OPERADOR', password, status, createdAt: new Date().toISOString() });
-      saveState();
-      audit('Configuração', `Operador local criado: ${name}.`, { entity: 'user' });
-      render();
+      try {
+        if (useBackend() && api?.createUser) {
+          if (!email) return alert('Informe o email do operador para criar o acesso no backend.');
+          await api.createUser(apiBase(), state.session.token, { name, email, password, role: 'OPERADOR', active: status !== 'Inativo' });
+          await syncStateFromBackend();
+        } else {
+          state.settings.localUsers.push({ id: uid('USR'), name, email, role: 'OPERADOR', password, status, createdAt: new Date().toISOString() });
+          saveState();
+        }
+        audit('Configuração', `Operador criado: ${name}.`, { entity: 'user' });
+        render();
+      } catch (error) {
+        alert(error.message || 'Falha ao criar operador.');
+      }
     });
-    document.querySelectorAll('.js-remove-local-user').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.js-remove-local-user').forEach(btn => btn.addEventListener('click', async () => {
       try { requireAdmin(); } catch (error) { alert(error.message); return; }
-      const user = localUserById(btn.dataset.userId);
+      const user = (useBackend() ? (state.meta.backendUsers || []).find(item => String(item.id) === String(btn.dataset.userId)) : localUserById(btn.dataset.userId));
       if (!user) return;
-      if (!confirm(`Remover o usuário local ${user.name}?`)) return;
-      state.settings.localUsers = (state.settings.localUsers || []).filter(item => String(item.id) !== String(user.id));
-      saveState();
-      audit('Configuração', `Usuário local removido: ${user.name}.`, { entity: 'user' });
-      render();
+      if (!confirm(`Remover o usuário ${user.name}?`)) return;
+      try {
+        if (useBackend() && api?.deleteUser) {
+          await api.deleteUser(apiBase(), state.session.token, user.id);
+          await syncStateFromBackend();
+        } else {
+          state.settings.localUsers = (state.settings.localUsers || []).filter(item => String(item.id) !== String(user.id));
+          saveState();
+        }
+        audit('Configuração', `Usuário removido: ${user.name}.`, { entity: 'user' });
+        render();
+      } catch (error) {
+        alert(error.message || 'Falha ao remover usuário.');
+      }
     }));
     document.getElementById('test-upcoming-alert-btn')?.addEventListener('click', async () => {
       const sent = await notifyUpcomingAppointments(true).catch(() => 0);
@@ -5475,8 +5507,12 @@ Falhas restantes: ${summary.failed}`);
       const fd = new FormData(event.target);
       const before = clone(state.settings);
       ensureAccessSettings();
-      state.settings.adminPassword = String(fd.get('adminPassword') || '').trim();
-      state.settings.operatorPassword = String(fd.get('operatorPassword') || '').trim();
+      const submittedAdminPassword = String(fd.get('adminPassword') || '').trim();
+      const submittedOperatorPassword = String(fd.get('operatorPassword') || '').trim();
+      if (isDesktopApp()) {
+        if (submittedAdminPassword) state.settings.adminPassword = submittedAdminPassword;
+        if (submittedOperatorPassword) state.settings.operatorPassword = submittedOperatorPassword;
+      }
       state.settings.brandName = String(fd.get('brandName') || '').trim() || 'Agenda Clínica';
       state.settings.companyName = String(fd.get('companyName') || '').trim();
       state.settings.supportEmail = String(fd.get('supportEmail') || '').trim();
@@ -5487,7 +5523,7 @@ Falhas restantes: ${summary.failed}`);
       state.settings.licenseClinicName = String(fd.get('licenseClinicName') || '').trim() || state.settings.companyName || 'Sua Clínica';
       state.settings.licenseOperatorLimit = Math.max(1, Number(fd.get('licenseOperatorLimit') || 3));
       state.settings.licenseExpiresAt = String(fd.get('licenseExpiresAt') || '').trim();
-      state.settings.licenseKey = String(fd.get('licenseKey') || '').trim();
+      state.settings.licenseKey = String(fd.get('licenseKey') || state.settings.licenseKey || '').trim();
       state.settings.enableUpcomingSessionAlert = String(fd.get('enableUpcomingSessionAlert') || '1') === '1';
       state.settings.enableProfessionalReminder = String(fd.get('enableProfessionalReminder') || '1') === '1';
       state.settings.enablePatientReminder = String(fd.get('enablePatientReminder') || '1') === '1';
@@ -5511,29 +5547,42 @@ Falhas restantes: ${summary.failed}`);
       }
       ensureAccessSettings();
       const adminUser = (state.settings.localUsers || []).find(user => user.role === 'ADMIN');
-      if (adminUser) { adminUser.password = state.settings.adminPassword; adminUser.name = adminUser.name || 'Administrador'; adminUser.status = 'Ativo'; }
+      if (isDesktopApp() && adminUser && submittedAdminPassword) { adminUser.password = submittedAdminPassword; adminUser.name = adminUser.name || 'Administrador'; adminUser.status = 'Ativo'; }
       const firstOperator = (state.settings.localUsers || []).find(user => user.role === 'OPERADOR');
-      if (firstOperator) firstOperator.password = state.settings.operatorPassword;
+      if (isDesktopApp() && firstOperator && submittedOperatorPassword) firstOperator.password = submittedOperatorPassword;
       state.settings.licensePreviewKey = buildLicenseKey(state.settings);
-      if (!state.settings.licenseKey) state.settings.licenseKey = state.settings.licensePreviewKey;
-      if (!isDesktopApp() && useBackend() && api?.updateLicense) {
+      if (!state.settings.licenseKey && isDesktopApp()) state.settings.licenseKey = state.settings.licensePreviewKey;
+      if (!isDesktopApp() && useBackend()) {
         try {
-          const remoteLicense = await api.updateLicense(apiBase(), state.session.token, {
-            companyName: state.settings.licenseClinicName || state.settings.companyName || 'Sua Clínica',
-            planName: state.settings.commercialPlan || 'Essentials',
-            status: 'ATIVA',
-            activationCode: state.settings.licenseKey || state.settings.licensePreviewKey || '',
-            maxUsers: state.settings.licenseOperatorLimit || 3,
-            expiresAt: state.settings.licenseExpiresAt || '',
-            graceDays: 7
-          });
-          if (remoteLicense?.companyName) state.settings.licenseClinicName = remoteLicense.companyName;
-          if (remoteLicense?.planName) state.settings.commercialPlan = remoteLicense.planName;
-          if (remoteLicense?.maxUsers != null) state.settings.licenseOperatorLimit = Math.max(1, Number(remoteLicense.maxUsers || 1));
-          if (remoteLicense?.expiresAt != null) state.settings.licenseExpiresAt = String(remoteLicense.expiresAt || '').slice(0, 10);
-          if (remoteLicense?.activationCode != null) state.settings.licenseKey = String(remoteLicense.activationCode || '');
+          if (api?.updateLicense) {
+            const remoteLicense = await api.updateLicense(apiBase(), state.session.token, {
+              companyName: state.settings.licenseClinicName || state.settings.companyName || 'Sua Clínica',
+              planName: state.settings.commercialPlan || 'Essentials',
+              status: 'ATIVA',
+              maxUsers: state.settings.licenseOperatorLimit || 3,
+              expiresAt: state.settings.licenseExpiresAt || '',
+              graceDays: 7
+            });
+            if (remoteLicense?.companyName) state.settings.licenseClinicName = remoteLicense.companyName;
+            if (remoteLicense?.planName) state.settings.commercialPlan = remoteLicense.planName;
+            if (remoteLicense?.maxUsers != null) state.settings.licenseOperatorLimit = Math.max(1, Number(remoteLicense.maxUsers || 1));
+            if (remoteLicense?.expiresAt != null) state.settings.licenseExpiresAt = String(remoteLicense.expiresAt || '').slice(0, 10);
+            if (remoteLicense?.activationCode != null) state.settings.licenseKey = String(remoteLicense.activationCode || '');
+            state.meta.backendLicense = clone(remoteLicense || null);
+          }
+          if ((submittedAdminPassword || submittedOperatorPassword) && api?.updateUser) {
+            const backendUsers = state.meta.backendUsers || [];
+            const backendAdmin = backendUsers.find(user => user.role === 'ADMIN');
+            const backendOperator = backendUsers.find(user => user.role === 'OPERADOR');
+            if (submittedAdminPassword && backendAdmin) await api.updateUser(apiBase(), state.session.token, backendAdmin.id, { password: submittedAdminPassword });
+            if (submittedOperatorPassword && backendOperator) await api.updateUser(apiBase(), state.session.token, backendOperator.id, { password: submittedOperatorPassword });
+            if ((submittedAdminPassword && !backendAdmin) || (submittedOperatorPassword && !backendOperator)) console.warn('Usuário de backend não encontrado para atualização de senha.');
+          }
+          await syncStateFromBackend();
         } catch (error) {
-          console.error('Falha ao sincronizar licença no backend', error);
+          console.error('Falha ao sincronizar segurança/licença no backend', error);
+          alert(error.message || 'Falha ao atualizar senha/licença no backend.');
+          return;
         }
       }
       saveState();

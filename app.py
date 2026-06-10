@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -23,6 +25,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = os.getenv('DATABASE_PATH', str(DATA_DIR / 'agenda_clinica.db'))
 JWT_SECRET = os.getenv('JWT_SECRET', 'troque-este-segredo-em-producao')
 JWT_EXPIRES_HOURS = int(os.getenv('JWT_EXPIRES_HOURS', '12'))
+LICENSE_SECRET = os.getenv('LICENSE_SECRET', JWT_SECRET)
 ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@agendaclinica.local')
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'Admin@2026')
 APP_ORIGIN = os.getenv('APP_ORIGIN', '*')
@@ -51,6 +54,43 @@ CONSENT_DEFAULT_TEXT = (
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def password_policy_error(password: str) -> str | None:
+    pwd = str(password or '')
+    if len(pwd) < 8:
+        return 'A senha precisa ter pelo menos 8 caracteres.'
+    if not re.search(r'[A-Z]', pwd):
+        return 'A senha precisa ter pelo menos 1 letra maiúscula.'
+    if not re.search(r'[a-z]', pwd):
+        return 'A senha precisa ter pelo menos 1 letra minúscula.'
+    if not re.search(r'\d', pwd):
+        return 'A senha precisa ter pelo menos 1 número.'
+    return None
+
+
+def normalize_license_expiry(value: Any) -> str:
+    raw = str(value or '').strip()
+    if not raw:
+        return ''
+    return raw[:10]
+
+
+def build_activation_code(company_name: str, plan_name: str, max_users: Any, expires_at: Any) -> str:
+    company = re.sub(r'[^A-Z0-9]', '', str(company_name or '').upper())[:6] or 'CLINIC'
+    plan = re.sub(r'[^A-Z0-9]', '', str(plan_name or '').upper())[:4] or 'PLAN'
+    limit = str(max(1, safe_int(max_users, 1))).zfill(2)
+    expiry = re.sub(r'\D', '', normalize_license_expiry(expires_at))[:8] or 'PERMANENTE'
+    payload = f'{company}|{plan}|{limit}|{expiry}|AGENDA-CLINICA'
+    signature = hmac.new(LICENSE_SECRET.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest().upper()[:10]
+    return f'LIC-{company}-{plan}-{limit}-{expiry}-{signature}'
 
 
 def get_db() -> sqlite3.Connection:
@@ -513,6 +553,7 @@ def get_license_settings() -> dict[str, Any]:
         'days_left': days_left,
         'created_at': row.get('created_at') or '',
         'updated_at': row.get('updated_at') or '',
+        'validation_mode': 'server_signed',
     }
 
 
@@ -739,13 +780,17 @@ def users_collection():
         rows = query_all('SELECT id, name, email, role, clinic_id, active, created_at FROM users ORDER BY id DESC')
         return jsonify(rows)
     body = request.get_json(force=True, silent=True) or {}
+    password = str(body.get('password', ''))
+    error = password_policy_error(password)
+    if error:
+        return jsonify({'error': error}), 400
     now = utcnow()
     row_id = execute(
         'INSERT INTO users (name, email, password_hash, role, clinic_id, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
         (
             body.get('name'),
             str(body.get('email', '')).strip().lower(),
-            generate_password_hash(str(body.get('password', '123456'))),
+            generate_password_hash(password),
             body.get('role', 'OPERADOR'),
             body.get('clinic_id'),
             1 if body.get('active', True) else 0,
@@ -780,6 +825,9 @@ def user_item(user_id: int):
         ),
     )
     if body.get('password'):
+        error = password_policy_error(str(body.get('password')))
+        if error:
+            return jsonify({'error': error}), 400
         execute('UPDATE users SET password_hash = ? WHERE id = ?', (generate_password_hash(str(body.get('password'))), user_id))
     after = query_one('SELECT id, name, email, role, clinic_id, active, created_at FROM users WHERE id = ?', (user_id,))
     audit(g.current_user['id'], g.current_user['name'], g.current_user['role'], 'Edição', 'users', f'Usuário {user_id} atualizado', before=before, after=after)
@@ -796,26 +844,39 @@ def license_status():
     body = request.get_json(force=True, silent=True) or {}
     before = get_license_settings()
     now = utcnow()
+    company_name = body.get('company_name') or before.get('company_name') or 'Sua Clínica'
+    plan_name = body.get('plan_name') or before.get('plan_name') or 'Plano Comercial'
+    status = str(body.get('status') or before.get('status') or 'ATIVA').upper()
+    max_users = max(1, safe_int(body.get('max_users'), int(before.get('max_users') or 5)))
+    expires_at = normalize_license_expiry(body.get('expires_at') if body.get('expires_at') is not None else before.get('expires_at') or '')
+    grace_days = max(0, safe_int(body.get('grace_days'), int(before.get('grace_days') or 7)))
+    activation_code = build_activation_code(company_name, plan_name, max_users, expires_at)
     execute(
         '''
         UPDATE license_settings
         SET company_name = ?, plan_name = ?, status = ?, activation_code = ?, max_users = ?, expires_at = ?, grace_days = ?, updated_at = ?
         WHERE id = 1
         ''',
-        (
-            body.get('company_name') or before.get('company_name') or 'Sua Clínica',
-            body.get('plan_name') or before.get('plan_name') or 'Plano Comercial',
-            str(body.get('status') or before.get('status') or 'ATIVA').upper(),
-            body.get('activation_code') if body.get('activation_code') is not None else before.get('activation_code') or '',
-            int(body.get('max_users') or before.get('max_users') or 5),
-            body.get('expires_at') if body.get('expires_at') is not None else before.get('expires_at') or '',
-            int(body.get('grace_days') or before.get('grace_days') or 7),
-            now,
-        ),
+        (company_name, plan_name, status, activation_code, max_users, expires_at, grace_days, now),
     )
     after = get_license_settings()
     audit(g.current_user['id'], g.current_user['name'], g.current_user['role'], 'Configuração', 'license', 'Licença atualizada', before=before, after=after)
     return jsonify(after)
+
+
+@app.route('/api/license/activate', methods=['POST'])
+def activate_license():
+    body = request.get_json(force=True, silent=True) or {}
+    activation_code = str(body.get('activation_code') or '').strip().upper()
+    current = get_license_settings()
+    if not activation_code:
+        return jsonify({'error': 'Informe o código de ativação.'}), 400
+    if activation_code != str(current.get('activation_code') or '').strip().upper():
+        return jsonify({'error': 'Código de ativação inválido.'}), 400
+    if current.get('status') == 'EXPIRADA':
+        return jsonify({'error': 'Esta licença já está expirada.', 'license': current}), 403
+    execute('UPDATE license_settings SET status = ?, updated_at = ? WHERE id = 1', ('ATIVA', utcnow()))
+    return jsonify(get_license_settings())
 
 
 @app.route('/api/export/full-backup', methods=['GET'])
