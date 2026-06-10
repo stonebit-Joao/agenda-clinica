@@ -228,6 +228,18 @@
     if (!digits) return '';
     return `https://wa.me/55${digits}?text=${encodeURIComponent(text)}`;
   }
+  function isHostedWebApp() {
+    return !isDesktopApp() && !/^(localhost|127(?:\.\d{1,3}){3})$/i.test(String(window.location.hostname || ''));
+  }
+  function hostedBackendUrl() {
+    return String(window.location.origin || '').trim().replace(/\/$/, '');
+  }
+  function preferredBackendUrl() {
+    return isHostedWebApp() ? hostedBackendUrl() : (String(state?.settings?.backendUrl || '').trim() || 'http://127.0.0.1:8000');
+  }
+  function preferredSaasEmail() {
+    return String(state?.settings?.backendEmail || 'admin@agendaclinica.local').trim().toLowerCase() || 'admin@agendaclinica.local';
+  }
 
   function normalizePhoneDigits(phone) {
     const digits = String(phone || '').replace(/\D/g, '');
@@ -3079,6 +3091,9 @@
           </div>
         </section>`;
     }
+    const hostedWeb = isHostedWebApp();
+    const backendUrl = preferredBackendUrl();
+    const backendEmail = preferredSaasEmail();
     return `
       <section class="auth">
         <div class="auth-card">
@@ -3091,19 +3106,21 @@
               <li>Sincronização de clínicas, pacientes, agenda e financeiro</li>
               <li>Empacotamento Windows e publicação web</li>
             </ul>
-            <div class="notice">Escolha o modo de acesso de acordo com a sua implantação.</div>
+            <div class="notice">${hostedWeb ? `Ambiente SaaS oficial detectado. O backend foi fixado em ${safe(backendUrl)} para evitar erro de acesso.` : 'Escolha o modo de acesso de acordo com a sua implantação.'}</div>
           </div>
           <div class="card">
             <h2>Entrar</h2>
             <form id="login-form" class="toolbar">
-              <div class="field"><label>Modo de acesso</label><select name="authMode"><option value="local" ${state.settings.authMode !== 'saas' ? 'selected' : ''}>Local / offline</option><option value="saas" ${state.settings.authMode === 'saas' ? 'selected' : ''}>Backend SaaS</option></select></div>
-              <div class="field"><label>Usuário local</label><select name="userId">${activeLocalUsers().map(user => `<option value="${safe(user.id)}">${safe(user.name)} — ${safe(user.role)}</option>`).join('')}</select></div>
-              <div class="field"><label>Email SaaS</label><input name="email" type="email" value="${safe(state.settings.backendEmail || 'admin@agendaclinica.local')}" placeholder="admin@agendaclinica.local" /></div>
-              <div class="field"><label>URL do backend</label><input name="backendUrl" type="text" value="${safe(state.settings.backendUrl || 'http://127.0.0.1:8000')}" placeholder="http://127.0.0.1:8000" /></div>
-              <div class="field"><label>Senha</label><input type="password" name="password" placeholder="Digite a senha" required /></div>
+              ${hostedWeb
+                ? `<input type="hidden" name="authMode" value="saas" /><div class="field"><label>Modo de acesso</label><input type="text" value="Backend SaaS" readonly /></div>`
+                : `<div class="field"><label>Modo de acesso</label><select name="authMode"><option value="local" ${state.settings.authMode !== 'saas' ? 'selected' : ''}>Local / offline</option><option value="saas" ${state.settings.authMode === 'saas' ? 'selected' : ''}>Backend SaaS</option></select></div>`}
+              ${hostedWeb ? '' : `<div class="field"><label>Usuário local</label><select name="userId">${activeLocalUsers().map(user => `<option value="${safe(user.id)}">${safe(user.name)} — ${safe(user.role)}</option>`).join('')}</select></div>`}
+              <div class="field"><label>Email SaaS</label><input name="email" type="email" value="${safe(backendEmail)}" placeholder="admin@agendaclinica.local" autocapitalize="off" autocomplete="username" spellcheck="false" /></div>
+              <div class="field"><label>URL do backend</label><input name="backendUrl" type="text" value="${safe(backendUrl)}" placeholder="http://127.0.0.1:8000" ${hostedWeb ? 'readonly' : ''} /></div>
+              <div class="field"><label>Senha</label><input type="password" name="password" placeholder="Digite a senha" autocomplete="current-password" required /></div>
               <button class="btn primary" type="submit">Acessar aplicativo</button>
             </form>
-            <p class="footer-note">No modo SaaS, use o backend em ${safe(state.settings.backendUrl || 'http://127.0.0.1:8000')} com e-mail e senha de usuário.</p>
+            <p class="footer-note">No modo SaaS, use o backend em ${safe(backendUrl)} com e-mail e senha de usuário.</p>
           </div>
         </div>
       </section>`;
@@ -4194,9 +4211,9 @@
             <div class="field"><label>Plano comercial</label><input name="commercialPlan" type="text" value="${safe(state.settings.commercialPlan || 'Essentials')}" /></div>
             <div class="field" style="grid-column: 1 / -1;"><label>Template padrão de consentimento</label><textarea name="consentTemplate">${safe(state.settings.consentTemplate || '')}</textarea></div>
             <div class="field" style="grid-column: 1 / -1;"><label>Biblioteca de palavras-chave clínicas</label><textarea name="clinicalKeywordLibrary">${safe(state.settings.clinicalKeywordLibrary || '')}</textarea></div>
-            <div class="field"><label>URL do backend</label><input name="backendUrl" type="text" value="${safe(state.settings.backendUrl || 'http://127.0.0.1:8000')}" /></div>
-            <div class="field"><label>Modo padrão</label><select name="authMode"><option value="local" ${state.settings.authMode !== 'saas' ? 'selected' : ''}>Local</option><option value="saas" ${state.settings.authMode === 'saas' ? 'selected' : ''}>SaaS</option></select></div>
-            <div class="field"><label>Email padrão SaaS</label><input name="backendEmail" type="email" value="${safe(state.settings.backendEmail || 'admin@agendaclinica.local')}" /></div>
+            <div class="field"><label>URL do backend</label><input name="backendUrl" type="text" value="${safe(preferredBackendUrl())}" ${isHostedWebApp() ? 'readonly' : ''} /></div>
+            ${isHostedWebApp() ? '<input type="hidden" name="authMode" value="saas" />' : ''}<div class="field"><label>Modo padrão</label><select name="authMode" ${isHostedWebApp() ? 'disabled' : ''}><option value="local" ${state.settings.authMode !== 'saas' ? 'selected' : ''}>Local</option><option value="saas" ${state.settings.authMode === 'saas' ? 'selected' : ''}>SaaS</option></select></div>
+            <div class="field"><label>Email padrão SaaS</label><input name="backendEmail" type="email" value="${safe(preferredSaasEmail())}" autocapitalize="off" spellcheck="false" /></div>
             ${renderAccessAutomationFields()}
             <button class="btn primary" type="submit">Salvar painel admin</button>
           </form>
@@ -5539,9 +5556,9 @@ Falhas restantes: ${summary.failed}`);
       state.settings.clinicalKeywordLibrary = String(fd.get('clinicalKeywordLibrary') || '').trim() || defaultState().settings.clinicalKeywordLibrary;
       state.settings.firstRunCompleted = true;
       if (!isDesktopApp()) {
-        state.settings.backendUrl = String(fd.get('backendUrl') || '').trim() || 'http://127.0.0.1:8000';
-        state.settings.authMode = String(fd.get('authMode') || 'local');
-        state.settings.backendEmail = String(fd.get('backendEmail') || '').trim() || 'admin@agendaclinica.local';
+        state.settings.backendUrl = isHostedWebApp() ? preferredBackendUrl() : (String(fd.get('backendUrl') || '').trim() || preferredBackendUrl());
+        state.settings.authMode = isHostedWebApp() ? 'saas' : String(fd.get('authMode') || 'local');
+        state.settings.backendEmail = String(fd.get('backendEmail') || '').trim().toLowerCase() || preferredSaasEmail();
         if (api) api.apiBase = state.settings.backendUrl;
       } else {
         state.settings.authMode = 'local';
@@ -5571,21 +5588,36 @@ Falhas restantes: ${summary.failed}`);
             if (remoteLicense?.activationCode != null) state.settings.licenseKey = String(remoteLicense.activationCode || '');
             state.meta.backendLicense = clone(remoteLicense || null);
           }
-          if ((submittedAdminPassword || submittedOperatorPassword) && api?.updateUser) {
+          if (submittedAdminPassword || submittedOperatorPassword) {
             let backendUsers = Array.isArray(state.meta.backendUsers) ? [...state.meta.backendUsers] : [];
             if (!backendUsers.length && api?.getUsers) {
               backendUsers = await api.getUsers(apiBase(), state.session.token).catch(() => []);
               state.meta.backendUsers = clone(backendUsers || []);
             }
-            const adminEmail = String(state.settings.backendEmail || state.session?.email || 'admin@agendaclinica.local').trim().toLowerCase();
-            const backendAdmin = backendUsers.find(user => user.role === 'ADMIN' && String(user.email || '').trim().toLowerCase() === adminEmail)
+            const currentEmail = String(state.session?.email || state.settings.backendEmail || 'admin@agendaclinica.local').trim().toLowerCase();
+            const backendAdmin = backendUsers.find(user => user.role === 'ADMIN' && String(user.email || '').trim().toLowerCase() === currentEmail)
               || backendUsers.find(user => user.role === 'ADMIN');
             const backendOperator = backendUsers.find(user => user.role === 'OPERADOR');
             if (submittedAdminPassword) {
-              if (!backendAdmin) throw new Error('Usuário ADMIN do backend não encontrado para troca de senha.');
-              await api.updateUser(apiBase(), state.session.token, backendAdmin.id, { password: submittedAdminPassword });
+              if (api?.changePassword) {
+                await api.changePassword(apiBase(), state.session.token, { newPassword: submittedAdminPassword });
+              } else if (api?.updateUser) {
+                if (!backendAdmin) throw new Error('Usuário ADMIN do backend não encontrado para troca de senha.');
+                await api.updateUser(apiBase(), state.session.token, backendAdmin.id, { password: submittedAdminPassword });
+              } else {
+                throw new Error('Camada de API indisponível para atualizar a senha do ADMIN.');
+              }
+              if (!api?.login) throw new Error('Camada de API indisponível para validar a nova senha.');
+              const relogin = await api.login(apiBase(), currentEmail, submittedAdminPassword);
+              state.session = { role: relogin.user.role, name: relogin.user.name, email: relogin.user.email, at: new Date().toISOString(), token: relogin.token, authMode: 'saas' };
+              state.settings.backendEmail = String(relogin.user.email || currentEmail).trim().toLowerCase();
+              if (api) {
+                api.apiBase = apiBase();
+                api.token = relogin.token;
+              }
             }
             if (submittedOperatorPassword) {
+              if (!api?.updateUser) throw new Error('Camada de API indisponível para atualizar a senha do OPERADOR.');
               if (!backendOperator) throw new Error('Usuário OPERADOR do backend não encontrado para troca de senha.');
               await api.updateUser(apiBase(), state.session.token, backendOperator.id, { password: submittedOperatorPassword });
             }
@@ -5648,14 +5680,15 @@ Falhas restantes: ${summary.failed}`);
       document.getElementById('login-form')?.addEventListener('submit', async event => {
         event.preventDefault();
         const fd = new FormData(event.target);
-        const authMode = isDesktopApp() ? 'local' : String(fd.get('authMode') || 'local');
+        const hostedWeb = isHostedWebApp();
+        const authMode = isDesktopApp() ? 'local' : (hostedWeb ? 'saas' : String(fd.get('authMode') || 'local'));
         const selectedUser = localUserById(String(fd.get('userId') || ''));
         const role = String(selectedUser?.role || 'ADMIN');
         const password = String(fd.get('password') || '');
         state.settings.authMode = authMode;
         if (!isDesktopApp()) {
-          state.settings.backendUrl = String(fd.get('backendUrl') || '').trim() || state.settings.backendUrl;
-          state.settings.backendEmail = String(fd.get('email') || '').trim() || state.settings.backendEmail;
+          state.settings.backendUrl = hostedWeb ? preferredBackendUrl() : (String(fd.get('backendUrl') || '').trim() || preferredBackendUrl());
+          state.settings.backendEmail = String(fd.get('email') || '').trim().toLowerCase() || preferredSaasEmail();
         }
         saveState();
         try {
